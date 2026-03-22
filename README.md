@@ -31,7 +31,7 @@ sudo ./install.sh
 ./update.sh
 ```
 
-`update.sh` pulls the latest llama.cpp source, rebuilds with the Vulkan backend, and downloads updated model files from HuggingFace (skipping unchanged files).
+`update.sh` pulls the latest llama.cpp source, rebuilds with the GPU backend configured in `.env`, and downloads updated model files from HuggingFace (skipping unchanged files).
 
 The server exposes an OpenAI-compatible API on `http://localhost:8080`.
 
@@ -47,6 +47,7 @@ The server exposes an OpenAI-compatible API on `http://localhost:8080`.
 ## Layout
 
 ```
+.env                        # local config (CMAKE_GPU_FLAG)
 config.yaml                 # llama-swap config (models, macros)
 models/
   presets.ini               # model presets (sampling params, ctx size, etc.)
@@ -57,7 +58,7 @@ llama.cpp/                  # cloned source + built binaries
 ## Requirements
 
 - Ubuntu 24.04 (Noble)
-- GPU with Vulkan support
+- GPU with Vulkan/CUDA/ROCm support
 - HuggingFace account (for higher download rate limits)
 
 ## HuggingFace authentication

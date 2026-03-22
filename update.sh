@@ -6,14 +6,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 export PATH="$HOME/.local/bin:$PATH"
+source .env
 
 # Pull latest llama.cpp source
 git -C llama.cpp pull
 
-# Rebuild with Vulkan backend (incremental)
+# Rebuild (incremental)
 cmake llama.cpp -B llama.cpp/build \
     -DBUILD_SHARED_LIBS=OFF \
-    -DGGML_VULKAN=ON
+    "$CMAKE_GPU_FLAG"
 
 cmake --build llama.cpp/build --config Release -j \
     --target llama-cli llama-mtmd-cli llama-server llama-gguf-split llama-bench
