@@ -5,7 +5,7 @@
 #
 #   ┌──────────────────────────────┬──────────────────────────────┐
 #   │ llama-swap --config          │ mc (Midnight Commander)      │
-#   │   llama-swap-config.yaml     │                              │
+#   │   config.yaml                │                              │
 #   │                              │                              │
 #   └──────────────────────────────┴──────────────────────────────┘
 #
@@ -31,7 +31,7 @@ tmux new-session -d -s "$SESSION_NAME" -n main
 tmux split-window -h -t "$SESSION_NAME:main"
 
 # Left pane: llama-swap
-tmux send-keys -t "$SESSION_NAME:main.0" "cd '$SCRIPT_DIR' && llama-swap --config llama-swap-config.yaml" C-m
+tmux send-keys -t "$SESSION_NAME:main.0" "cd '$SCRIPT_DIR' && llama-swap --config config.yaml" C-m
 
 # Right pane: Midnight Commander
 tmux send-keys -t "$SESSION_NAME:main.1" "mc" C-m

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run.sh — Update llama.cpp & models, then start llama-server.
+# run.sh — Update llama.cpp & models, then start llama-swap.
 #   ./run.sh          # run directly
 #   See run-tmux.sh   # run in tmux with mc
 set -euo pipefail
@@ -9,4 +9,4 @@ cd "$SCRIPT_DIR"
 
 bash update.sh
 
-exec ./llama.cpp/llama-server --host 0.0.0.0 --models-preset models/presets.ini
+exec llama-swap --config config.yaml
