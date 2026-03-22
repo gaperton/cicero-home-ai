@@ -35,10 +35,6 @@ Configured for AMD, using Vulkan with the default drivers from Linux HWE kernels
    ```bash
    ./update.sh
    ```
-7. Start the server:
-   ```bash
-   ./run-tmux.sh
-   ```
 
 ## Booting into TTY and auto-starting the server
 
