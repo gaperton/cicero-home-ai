@@ -91,6 +91,7 @@ All runtime settings live in `.env`:
 | `CMAKE_GPU_FLAG` | `-DGGML_VULKAN=ON` | GPU backend for llama.cpp build. Use `-DGGML_CUDA=ON` for CUDA or `-DGGML_HIP=ON` for ROCm. |
 | `CTX_QUANT` | `f16` | KV cache quantization. `f16` is the llama.cpp default; `q8_0` or `q4_0` reduce VRAM at some quality cost. |
 | `VRAM_BUFFER` | `256` | VRAM safety margin in MiB passed to `-fitt`. llama.cpp auto-fits context size to leave this much free. |
+| `CACHE_RAM` | `-1` | RAM KV cache limit in MiB (`-1` = no limit, `0` = disable, default in llama.cpp: 8192). |
 
 ## Models
 
