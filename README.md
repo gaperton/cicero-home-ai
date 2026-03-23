@@ -30,7 +30,7 @@ Configured for AMD, using Vulkan with the default drivers from Linux HWE kernels
    source ~/.bashrc
    hf auth login
    ```
-5. Edit `.env` if needed — default is Vulkan; change `CMAKE_GPU_FLAG` for CUDA or ROCm
+5. Edit `.env` if needed (see [Configuration](#configuration) below)
 6. Build llama.cpp and download all models (~70 GB):
    ```bash
    ./update.sh
@@ -81,22 +81,34 @@ fi
 
 On next boot, selecting the GRUB entry will log in automatically and launch the tmux session with the server running.
 
+## Configuration
+
+All runtime settings live in `.env`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `CMAKE_GPU_FLAG` | `-DGGML_VULKAN=ON` | GPU backend for llama.cpp build. Use `-DGGML_CUDA=ON` for CUDA or `-DGGML_HIP=ON` for ROCm. |
+| `CTX_QUANT` | `f16` | KV cache quantization. `f16` is the llama.cpp default; `q8_0` or `q4_0` reduce VRAM at some quality cost. |
+| `VRAM_BUFFER` | `256` | VRAM safety margin in MiB passed to `-fitt`. llama.cpp auto-fits context size to leave this much free. |
+
 ## Models
 
 Sized to use the full 32GB VRAM of the AMD R9700 in TTY mode. If running from a desktop session, reduce `--ctx-size` to ~150,000 to account for the ~2–4 GB consumed by the UI — though inference quality degrades beyond 150–200K context anyway due to attention limitations of current models.
 
-| Preset | Model | Context |
-|---|---|---|
-| `qwen3.5-27b@q5-200k` | Qwen3.5 27B UD-Q5_K_XL | 200k |
-| `qwen3.5-35b-a3b@q5-262k` | Qwen3.5 35B-A3B UD-Q5_K_XL | 262k |
-| `glm4.7-flash@q5` | GLM-4.7 Flash UD-Q5_K_XL | — |
+| Preset | Model |
+|---|---|
+| `qwen3.5-27b@q5-200k` | Qwen3.5 27B UD-Q5_K_XL |
+| `qwen3.5-35b-a3b@q5-262k` | Qwen3.5 35B-A3B UD-Q5_K_XL |
+| `glm4.7-flash@q5` | GLM-4.7 Flash UD-Q5_K_XL |
+
+Context size is auto-fit by llama.cpp to available VRAM (controlled by `VRAM_BUFFER` in `.env`).
 
 Default sampling params follow official model card recommendations. llama.cpp flags are taken as suggested by Sudo Su (@SudoingX).
 
 ## Layout
 
 ```
-.env                        # local config (CMAKE_GPU_FLAG)
+.env                        # local config (CMAKE_GPU_FLAG, CTX_QUANT, VRAM_BUFFER)
 config.yaml                 # llama-swap config (models, sampling params, server flags)
 models/
   *.gguf                    # model files (downloaded from unsloth HF repos)
