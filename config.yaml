@@ -2,7 +2,7 @@ healthCheckTimeout: 30
 
 macros:
   "server-flags": "-ngl 99 -np 1 -fa on --no-mmap -fitt ${env.VRAM_BUFFER} -cram ${env.CACHE_RAM} --cache-type-k ${env.CTX_QUANT} --cache-type-v ${env.CTX_QUANT}"
-  "qwen-chat":    "--temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.00 --presence-penalty 1.5 --repeat-penalty 1.0 --n-predict 32768"
+  "qwen-chat":    "--temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.00 --presence-penalty 1.5 --repeat-penalty 1.0 --reasoning-budget 8192"
   "glm-chat":     "--temp 1.0 --top-p 0.95 --min-p 0.01 --repeat-penalty 1.0"
 
 models:
