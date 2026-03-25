@@ -9,10 +9,10 @@ cd "$SCRIPT_DIR"
 
 bash update.sh
 
-# Start MCP proxy (brave search → HTTP on :8200)
-mcpo --port 8200 --config "$SCRIPT_DIR/mcp-config.json" &
-MCPO_PID=$!
-trap 'kill $MCPO_PID 2>/dev/null' EXIT
+# Start MCP proxy — wraps stdio MCP servers as streamable HTTP on :8200
+mcp-proxy --port 8200 --transport streamablehttp --named-server-config "$SCRIPT_DIR/mcp-config.json" &
+MCP_PID=$!
+trap 'kill $MCP_PID 2>/dev/null' EXIT
 
 
 WEBUI_CONFIG_ARGS=()
@@ -24,4 +24,5 @@ fi
     --host 0.0.0.0 --port 8080 \
     --models-preset models.ini \
     --models-max 1 \
+    --webui-mcp-proxy \
     "${WEBUI_CONFIG_ARGS[@]}"

@@ -4,12 +4,12 @@
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-brave-search"],
       "env": {
-        "BRAVE_API_KEY": "YOUR_BRAVE_API_KEY_HERE"
+        "BRAVE_API_KEY": "your key here"
       }
     },
     "fetch": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-fetch"]
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
     }
   }
 }

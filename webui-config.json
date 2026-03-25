@@ -2,15 +2,15 @@
   "mcpServers": [
     {
       "enabled": true,
-      "url": "http://localhost:8200/brave-search",
+      "url": "http://localhost:8200/servers/brave-search/mcp",
       "name": "Brave Search",
-      "useProxy": false
+      "useProxy": true
     },
     {
       "enabled": true,
-      "url": "http://localhost:8200/fetch",
+      "url": "http://localhost:8200/servers/fetch/mcp",
       "name": "Fetch",
-      "useProxy": false
+      "useProxy": true
     }
   ]
 }

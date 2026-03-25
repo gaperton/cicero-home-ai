@@ -12,7 +12,8 @@ apt-get install -y pciutils build-essential cmake ccache curl libcurl4-openssl-d
 
 # Install HuggingFace CLI and mcpo for MCP servers (as the actual user, not root)
 sudo -u "$SUDO_USER" pipx install huggingface_hub[cli]
-sudo -u "$SUDO_USER" pipx install mcpo
+sudo -u "$SUDO_USER" pipx install mcp-proxy
+sudo -u "$SUDO_USER" pipx install uv
 sudo -u "$SUDO_USER" pipx ensurepath
 
 # Clone llama.cpp and fix ownership (cloned as root, owned by user)
