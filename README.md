@@ -54,6 +54,8 @@ MCP servers are configured in `mcp-config.json` (gitignored — contains API key
 
 The web UI connects to these at `http://localhost:8200/servers/{name}/mcp` via the llama-server CORS proxy.
 
+A free Brave Search API key (2000 queries/month) can be obtained at [brave.com/search/api](https://brave.com/search/api) — sign up, create an app, and copy the API key into `mcp-config.json`.
+
 **mcp-config.json format:**
 ```json
 {
