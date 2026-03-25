@@ -1,4 +1,15 @@
 services:
+  mcpo:
+    image: ghcr.io/open-webui/mcpo:main
+    container_name: mcpo
+    restart: unless-stopped
+    ports:
+      - "8200:8200"
+    command: ["--port", "8200", "--config", "/app/mcp-config.json"]
+    volumes:
+      - ./mcp-config.json:/app/mcp-config.json:ro
+      - /home:/home:ro
+
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
