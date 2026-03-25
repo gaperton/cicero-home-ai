@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-tmux.sh — Start llama-swap in a tmux session.
+# run-tmux.sh — Start llama-server in a tmux session.
 #   ./run-tmux.sh        # start or attach
 #   ./run-tmux.sh kill   # stop the session
 set -euo pipefail
@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-SESSION_NAME="llama-swap"
+SESSION_NAME="llama-server"
 
 # Kill the session if requested
 if [ "${1:-}" = "kill" ]; then

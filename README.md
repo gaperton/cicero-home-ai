@@ -1,18 +1,18 @@
 # cicero-home-ai
 
-Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/llama.cpp), managed by [llama-swap](https://github.com/mostlygeek/llama-swap) for on-demand model switching. Exposes an OpenAI-compatible API for use with agents and chat clients.
+Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/llama.cpp) in router mode for on-demand model switching. Exposes an OpenAI-compatible API for use with agents and chat clients.
 
 ## How it works
 
-[llama-swap](https://github.com/mostlygeek/llama-swap) acts as a proxy in front of `llama-server`. It listens on port 8080 and routes requests to the appropriate model based on the model name in the request. When a request comes in for a model that isn't loaded, llama-swap stops the current `llama-server` instance, starts a new one with the requested model, and proxies the request — so only one model is in VRAM at a time.
+`llama-server` runs in **router mode** — a built-in multi-model proxy. It listens on port 8080 and routes requests to the appropriate model based on the model name in the request. When a request comes in for a model that isn't loaded, the router starts a new child process for that model and proxies the request. With `--models-max 1`, only one model is in VRAM at a time (LRU eviction).
 
-Model server flags and sampling parameters are defined as macros in `config.yaml`.
+Model server flags and sampling parameters are defined in `models.ini` (INI preset file).
 
 | Script | What it does |
 |---|---|
 | `install.sh` | Installs system dependencies, clones llama.cpp, builds it with the GPU backend from `.env`, installs the `hf` CLI. Run once with `sudo`. |
 | `update.sh` | Pulls latest llama.cpp source, rebuilds incrementally, downloads updated model files from HuggingFace (skips unchanged files). |
-| `run.sh` | Runs `update.sh`, then starts `llama-swap` with `config.yaml`. |
+| `run.sh` | Runs `update.sh`, then starts `llama-server` in router mode with `models.ini`. |
 | `run-tmux.sh` | Runs `run.sh` in a tmux session with `mc` file manager in the right pane. The recommended way to run the server. |
 | `bench.sh` | Runs `llama-bench` across all configured models and saves a Markdown report to `reports/`. |
 
@@ -115,30 +115,26 @@ Default sampling params follow official model card recommendations. llama.cpp fl
 hf download <hf-repo> <filename>.gguf --local-dir models/
 ```
 
-**2. Add a preset in `config.yaml` under `models:`:**
+**2. Add a preset section in `models.ini`:**
 
-```yaml
-"my-model@q5":
-  proxy: "http://127.0.0.1:${PORT}"
-  ttl: 1800
-  cmd: >
-    ./llama.cpp/llama-server --port ${PORT}
-    --model models/<filename>.gguf
-    ${server-flags}
-    ${qwen-chat}
+```ini
+[my-model@q5]
+model = models/<filename>.gguf
+temp = 1.0
+top-p = 0.95
+repeat-penalty = 1.0
 ```
 
-- The key (`my-model@q5`) is the model name clients pass in API requests.
-- Use `${server-flags}` for standard GPU/memory flags.
-- Use `${qwen-chat}` or `${glm-chat}` for chat sampling params, or omit them for agent-facing models (agents send their own).
-- Add a new macro in the `macros:` section if the model needs different sampling params.
-- To remove a model, delete its entry from `config.yaml` and its `hf download` line from `update.sh`.
+- The section name (`my-model@q5`) is the model name clients pass in API requests.
+- Global settings from `[*]` (GPU layers, flash attention, etc.) are inherited automatically.
+- Add sampling params per model, or omit them for agent-facing models (agents send their own).
+- To remove a model, delete its section from `models.ini` and its `hf download` line from `update.sh`.
 
 ## Layout
 
 ```
-.env                        # local config (CMAKE_GPU_FLAG, CTX_QUANT, VRAM_BUFFER)
-config.yaml                 # llama-swap config (models, sampling params, server flags)
+.env                        # local config (CMAKE_GPU_FLAG)
+models.ini                  # router preset (models, sampling params, server flags)
 models/
   *.gguf                    # model files (downloaded from unsloth HF repos)
 reports/

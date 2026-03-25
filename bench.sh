@@ -12,7 +12,7 @@ if [[ ! -x "$BENCH" ]]; then
     exit 1
 fi
 
-# Match server flags from config.yaml: server-flags macro
+# Match global server flags from models.ini
 BENCH_FLAGS="-ngl 99 -fa on -d 0 -r 3"
 
 REPORTS_DIR="reports"
