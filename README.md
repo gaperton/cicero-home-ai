@@ -1,6 +1,6 @@
 # cicero-home-ai
 
-Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/llama.cpp) in router mode for on-demand model switching. Exposes an OpenAI-compatible API for use with agents and chat clients.
+Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/llama.cpp) in router mode for on-demand model switching. Exposes an OpenAI-compatible API on port 8080 and a built-in web UI at the same port.
 
 ## How it works
 
@@ -8,11 +8,13 @@ Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/ll
 
 Model server flags and sampling parameters are defined in `models.ini` (INI preset file).
 
+`mcp-proxy` runs alongside llama-server and wraps stdio MCP servers (Brave Search, web fetch) as streamable HTTP endpoints on port 8200. The llama.cpp web UI connects to these via its built-in CORS proxy.
+
 | Script | What it does |
 |---|---|
-| `install.sh` | Installs system dependencies, clones llama.cpp, builds it with the GPU backend from `.env`, installs the `hf` CLI. Run once with `sudo`. |
+| `install.sh` | Installs system dependencies, clones llama.cpp, installs the `hf` CLI, `mcp-proxy`, and `uv`. Run once with `sudo`. |
 | `update.sh` | Pulls latest llama.cpp source, rebuilds incrementally, downloads updated model files from HuggingFace (skips unchanged files). |
-| `run.sh` | Runs `update.sh`, then starts `llama-server` in router mode with `models.ini`. |
+| `run.sh` | Runs `update.sh`, starts `mcp-proxy` (MCP servers on :8200), then starts `llama-server` in router mode. |
 | `run-tmux.sh` | Runs `run.sh` in a tmux session with `mc` file manager in the right pane. The recommended way to run the server. |
 | `bench.sh` | Runs `llama-bench` across all configured models and saves a Markdown report to `reports/`. |
 
@@ -32,10 +34,42 @@ Configured for AMD, using Vulkan with the default drivers from Linux HWE kernels
    hf auth login
    ```
 5. Edit `.env` if needed (see [Configuration](#configuration) below)
-6. Build llama.cpp and download all models (~70 GB):
+6. Copy `mcp-config.json` and fill in your Brave Search API key (free tier at brave.com/search/api):
+   ```bash
+   cp mcp-config.json.example mcp-config.json   # or edit directly
+   ```
+7. Build llama.cpp and download all models (~70 GB):
    ```bash
    ./update.sh
    ```
+
+## MCP tools
+
+MCP servers are configured in `mcp-config.json` (gitignored — contains API keys). `mcp-proxy` wraps them as streamable HTTP endpoints used by the llama.cpp web UI.
+
+| Server | Package | Description |
+|---|---|---|
+| `brave-search` | `@modelcontextprotocol/server-brave-search` | Web search via Brave Search API |
+| `fetch` | `mcp-server-fetch` (via `uvx`) | Free web page fetching |
+
+The web UI connects to these at `http://localhost:8200/servers/{name}/mcp` via the llama-server CORS proxy.
+
+**mcp-config.json format:**
+```json
+{
+  "mcpServers": {
+    "brave-search": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": { "BRAVE_API_KEY": "your-key-here" }
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    }
+  }
+}
+```
 
 ## Booting into TTY and auto-starting the server
 
@@ -84,18 +118,21 @@ On next boot, selecting the GRUB entry will log in automatically and launch the 
 
 ## Configuration
 
-All runtime settings live in `.env`:
+**`.env`** — GPU backend for the llama.cpp build:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CMAKE_GPU_FLAG` | `-DGGML_VULKAN=ON` | GPU backend for llama.cpp build. Use `-DGGML_CUDA=ON` for CUDA or `-DGGML_HIP=ON` for ROCm. |
-| `CTX_QUANT` | `f16` | KV cache quantization. `f16` is the llama.cpp default; `q8_0` or `q4_0` reduce VRAM at some quality cost. |
-| `VRAM_BUFFER` | `256` | VRAM safety margin in MiB passed to `-fitt`. llama.cpp auto-fits context size to leave this much free. |
-| `CACHE_RAM` | `-1` | RAM KV cache limit in MiB (`-1` = no limit, `0` = disable, default in llama.cpp: 8192). |
+| `CMAKE_GPU_FLAG` | `-DGGML_VULKAN=ON` | GPU backend. Use `-DGGML_CUDA=ON` for CUDA or `-DGGML_HIP=ON` for ROCm. |
+
+**`models.ini`** — per-model sampling params and global server flags (`[*]` section).
+
+**`mcp-config.json`** — MCP server definitions (gitignored, contains API keys).
+
+**`webui-config.json`** — pre-configures MCP server URLs in the web UI.
 
 ## Models
 
-Sized to use the full 32GB VRAM of the AMD R9700 in TTY mode. If running from a desktop session, reduce `--ctx-size` to ~150,000 to account for the ~2–4 GB consumed by the UI — though inference quality degrades beyond 150–200K context anyway due to attention limitations of current models.
+Sized to use the full 32GB VRAM of the AMD R9700 in TTY mode. If running from a desktop session, reduce context to ~150,000 to account for the ~2–4 GB consumed by the UI.
 
 | Preset | Model |
 |---|---|
@@ -103,9 +140,7 @@ Sized to use the full 32GB VRAM of the AMD R9700 in TTY mode. If running from a 
 | `qwen3.5-35b-a3b@q5-262k` | Qwen3.5 35B-A3B UD-Q5_K_XL |
 | `glm4.7-flash@q5` | GLM-4.7 Flash UD-Q5_K_XL |
 
-Context size is auto-fit by llama.cpp to available VRAM (controlled by `VRAM_BUFFER` in `.env`).
-
-Default sampling params follow official model card recommendations. llama.cpp flags are taken as suggested by Sudo Su (@SudoingX).
+Context size is auto-fit by llama.cpp to available VRAM (`fit-target = 256` in `models.ini`).
 
 ### Adding or changing models
 
@@ -128,6 +163,7 @@ repeat-penalty = 1.0
 - The section name (`my-model@q5`) is the model name clients pass in API requests.
 - Global settings from `[*]` (GPU layers, flash attention, etc.) are inherited automatically.
 - Add sampling params per model, or omit them for agent-facing models (agents send their own).
+- Always set `repeat-penalty = 1.0` to explicitly disable it.
 - To remove a model, delete its section from `models.ini` and its `hf download` line from `update.sh`.
 
 ## Layout
@@ -135,8 +171,10 @@ repeat-penalty = 1.0
 ```
 .env                        # local config (CMAKE_GPU_FLAG)
 models.ini                  # router preset (models, sampling params, server flags)
+mcp-config.json             # MCP server definitions (gitignored — contains API keys)
+webui-config.json           # web UI pre-configuration (MCP server URLs)
 models/
-  *.gguf                    # model files (downloaded from unsloth HF repos)
+  *.gguf                    # model files (downloaded from HuggingFace)
 reports/
   bench-*.md                # llama-bench output (generated by bench.sh)
 llama.cpp/                  # cloned source + built binaries

@@ -13,10 +13,12 @@ A home AI server setup — not a software project with a build system or tests. 
 **Config files:**
 - `.env` — `CMAKE_GPU_FLAG` for the llama.cpp build (Vulkan/CUDA/ROCm)
 - `models.ini` — router preset file: per-model settings and global server flags
+- `mcp-config.json` — MCP server definitions (gitignored, contains API keys); used by `mcp-proxy`
+- `webui-config.json` — pre-configures MCP server URLs in the llama.cpp web UI
 - `llama.cpp/` — cloned separately (gitignored), built binaries live here alongside source
 
 **Script flow:**
-- `run-tmux.sh` → `run.sh` → `update.sh` (pull + rebuild llama.cpp, download models) → `llama-server --models-preset models.ini`
+- `run-tmux.sh` → `run.sh` → `update.sh` (pull + rebuild llama.cpp, download models) → `mcp-proxy` (MCP servers on :8200) + `llama-server --models-preset models.ini`
 
 ## Key conventions
 
