@@ -3,3 +3,5 @@ llama.cpp
 .cache
 .claude
 reports
+lobechat/.env
+lobechat/data/

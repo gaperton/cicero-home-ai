@@ -30,3 +30,6 @@ hf download unsloth/Qwen3.5-35B-A3B-GGUF \
 
 hf download unsloth/GLM-4.7-Flash-GGUF \
     GLM-4.7-Flash-UD-Q5_K_XL.gguf --local-dir models/
+
+hf download unsloth/gemma-4-31B-it-GGUF \
+    gemma-4-31B-it-UD-Q5_K_XL.gguf --local-dir models/

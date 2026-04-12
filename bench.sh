@@ -76,4 +76,7 @@ run_bench "Qwen 3.5 35B-A3B · UD-Q5_K_XL" \
 run_bench "GLM-4.7 Flash · UD-Q5_K_XL" \
     "models/GLM-4.7-Flash-UD-Q5_K_XL.gguf"
 
+run_bench "Gemma 4 31B · UD-Q5_K_XL" \
+    "models/gemma-4-31B-it-UD-Q5_K_XL.gguf"
+
 echo "=== Done ==="

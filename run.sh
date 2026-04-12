@@ -9,10 +9,20 @@ cd "$SCRIPT_DIR"
 
 bash update.sh
 
-# Start MCP proxy — wraps stdio MCP servers as streamable HTTP on :8200
+# Start MCP proxy — wraps stdio MCP servers as streamable HTTP on :8200 (for llama-server webui)
 mcp-proxy --port 8200 --transport streamablehttp --named-server-config "$SCRIPT_DIR/mcp-config.json" &
 MCP_PID=$!
-trap 'kill $MCP_PID 2>/dev/null' EXIT
+
+# Start Open WebUI on port 3000, preconfigured to use llama-server
+export DATA_DIR="$HOME/.open-webui"
+export WEBUI_SECRET_KEY="${WEBUI_SECRET_KEY:-$(cat "$DATA_DIR/.secret" 2>/dev/null || (mkdir -p "$DATA_DIR" && openssl rand -hex 32 | tee "$DATA_DIR/.secret"))}"
+export ENABLE_OLLAMA_API=false
+export OPENAI_API_BASE_URLS="http://127.0.0.1:8080/v1"
+export OPENAI_API_KEYS="none"
+open-webui serve --port 3000 &
+OPENWEBUI_PID=$!
+
+trap 'kill $MCP_PID $OPENWEBUI_PID 2>/dev/null' EXIT
 
 
 WEBUI_CONFIG_ARGS=()
