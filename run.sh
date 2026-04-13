@@ -7,8 +7,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-bash update.sh
-
 # Start MCP proxy — wraps stdio MCP servers as streamable HTTP on :8200 (for llama-server webui)
 mcp-proxy --port 8200 --transport streamablehttp --named-server-config "$SCRIPT_DIR/mcp-config.json" &
 MCP_PID=$!
