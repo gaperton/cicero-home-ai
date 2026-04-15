@@ -28,7 +28,7 @@ if [[ -f "$SCRIPT_DIR/webui-config.json" ]]; then
     WEBUI_CONFIG_ARGS=(--webui-config-file "$SCRIPT_DIR/webui-config.json")
 fi
 
-./llama.cpp/llama-server \
+RADV_DEBUG=nocompute ./llama.cpp/llama-server \
     --host 0.0.0.0 --port 8080 \
     --models-preset models.ini \
     --models-max 1 \

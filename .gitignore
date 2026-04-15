@@ -3,5 +3,4 @@ llama.cpp
 .cache
 .claude
 reports
-lobechat/.env
-lobechat/data/
+mcp-config.json
