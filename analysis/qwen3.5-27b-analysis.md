@@ -1,6 +1,6 @@
 # Qwen3.5 27B Benchmark Analysis
 
-## Hardware Configuration
+## 1. Environment
 
 **Motherboard:** ASUS ROG Strix X570-F Gaming
 - Chipset: AMD X570
@@ -16,22 +16,17 @@
 | Slot | Physical | Electrical | Source | Bandwidth |
 |------|----------|------------|--------|----------:|
 | GPU 0 (slot 1) | x16 | **x8** | CPU direct | ~16 GB/s |
-| GPU 1 (slot 3) | x16 | **x8** | CPU direct | ~16 GB/s |
+| GPU 1 (slot 2) | x16 | **x8** | CPU direct | ~16 GB/s |
 
 The CPU's 16 PCIe 4.0 lanes are bifurcated x8/x8 across both slots. Both GPUs connect directly to the CPU PCIe controller — the X570 chipset is not in the path. There is no direct GPU-to-GPU interconnect (no NVLink, no xGMI/Infinity Fabric — those are Instinct/MI series only). Inter-GPU traffic routes through the CPU: **GPU 0 → CPU PCIe controller → GPU 1**, with effective bandwidth capped at ~16 GB/s per direction.
 
 ---
 
-**Benchmark:**
-Test command: `llama-bench -ngl 99 -fa 1 -p 512,2048,4096 -n 256 -r 2 -sm none,layer,row`
-Environment: `RADV_DEBUG=nocompute` applied to both backends.
-Build: `5d14e5d19 (8797)`
+## 2. Experiment
 
----
+### Benchmark
 
-## 1. Facts
-
-### Model sizes vs. VRAM
+Qwen3.5 27B, **UD** (Unsloth Dynamic) quantization variants: Q4_K_XL, Q5_K_XL, Q6_K_XL. UD uses imatrix-guided non-uniform bit allocation across layers, giving better quality than standard K-quants at the same nominal bit depth.
 
 | Quant     | Size (GiB) | Fits single GPU? |
 |-----------|----------:|:----------------:|
@@ -40,6 +35,10 @@ Build: `5d14e5d19 (8797)`
 | Q6_K_XL   | 23.90     | Yes              |
 
 All three quants fit entirely in a single R9700. No model requires both GPUs to hold weights.
+
+`llama-bench -m models/Qwen3.5-27B-UD-Q{4,5,6}_K_XL.gguf -ngl 99 -fa 1 -p 512,2048,4096 -n 256 -r 2 -sm none,layer,row`
+
+All layers on GPU, flash attention enabled. Measures prompt processing at three context lengths (512 / 2048 / 4096 tokens) and token generation (256 tokens), across all three split modes, repeated twice. Both ROCm and Vulkan backends tested under `RADV_DEBUG=nocompute`. Build `5d14e5d19 (8797)`.
 
 ### Prompt processing (pp) — tokens/sec
 
@@ -89,71 +88,115 @@ All three quants fit entirely in a single R9700. No model requires both GPUs to 
 
 ---
 
-## 2. Explanations
+## 3. Observations
 
-### Why layer split accelerates prompt processing
+**Vulkan row and layer splits are equivalent.**
 
-PP is compute-bound (many tokens processed in parallel). With `--split-mode layer`, the first half of the transformer layers runs on GPU 0 and the second half on GPU 1, effectively doubling compute resources. At pp512 there is no gain — the overhead of moving the activation tensor between GPUs costs as much as the saved compute. By pp4096 the batch is large enough to fully amortize that overhead, and both backends see ~50–70% speedup.
+For Vulkan, row and layer deliver virtually identical PP at all context lengths and all quants. The distinction is irrelevant on this backend.
 
-The crossover point is somewhere around pp1024–pp2048.
+**Token generation ranking (best → worst):**
 
-### Why ROCm layer PP is faster than Vulkan layer PP (except Q6)
+Single GPU (no split): Vulkan leads ROCm by 11–20%. With two GPUs: ROCm row > ROCm layer >> Vulkan row ≈ Vulkan layer. Splits hurt Vulkan TG severely (−30%); ROCm tolerates them (row: +3%, layer: −7%).
 
-ROCm uses the HIP compute path natively on gfx1201. The Vulkan tests are run with `RADV_DEBUG=nocompute`, which forces compute operations through the graphics queue rather than the dedicated async compute queue. This likely degrades multi-GPU throughput for compute-bound operations. The effect diminishes with larger quants (Q6) because the bottleneck shifts toward memory bandwidth even in PP. This is an implication, not confirmed — it would need a Vulkan run without `nocompute` to isolate.
+**Prompt processing ranking at large context (best → worst):**
 
-### Why Vulkan none is faster than ROCm none for token generation
+Single GPU: ROCm is modestly faster than Vulkan. With two GPUs: ROCm layer dominates (up to 1800 t/s at pp4096), then Vulkan row ≈ Vulkan layer (~1400 t/s), then ROCm row — catastrophically slow (~670 t/s), worse than single GPU.
 
-TG is memory-bandwidth bound: each generated token reads all weight matrices once. No data parallelism exists (batch size = 1). The RADV Vulkan driver appears to have lower per-kernel dispatch overhead for sequential memory-bound operations on this architecture than the ROCm HIP runtime, resulting in 11–20% higher throughput. The `nocompute` flag should not affect memory bandwidth, so this is likely a genuine driver-level difference.
+**Layer split gain is context-dependent.**
 
-### Why ROCm row split is terrible for PP (and TG)
+At pp512 split overhead negates any gain. By pp4096 the batch amortizes the inter-GPU transfer cost, yielding 50–70% speedup. The crossover is around pp1024–pp2048.
 
-Row split distributes each weight matrix across both GPUs column-wise. Every matrix multiply requires an allreduce (sum partial results) across GPUs at every layer. Qwen3.5 27B has 62 transformer layers, so every forward pass incurs 62+ inter-GPU synchronizations through the CPU PCIe controller. The result: ROCm row split PP is roughly **40% of ROCm none** — worse than single-GPU, not better.
+**Q6 disproportionately hurts performance for a modest accuracy gain.**
 
-Back-of-envelope: at pp4096, the reduce tensor is hidden_dim (5120) × batch (4096) × 2 bytes = ~40 MB per layer. With 62 layers, row split moves ~2.5 GB per forward pass over a ~16 GB/s PCIe 4.0 x8 link — about 0.15 seconds of transfer per forward pass, before compute. ROCm also has no zero-copy P2P between the two slots (traffic bounces through CPU memory), so effective throughput is likely lower than the raw PCIe ceiling. The allreduce overhead per layer dominates completely.
-
-The same mechanism applies to TG but the effect is smaller because the per-token reduce tensor is tiny (5120 × 1 × 2 = 10 KB per layer), so allreduce round-trip latency rather than bandwidth becomes the bottleneck.
-
-### Why Vulkan row split does NOT have this problem
-
-This is unexpected. Vulkan row split PP matches Vulkan layer split at large contexts (within 2%). This suggests the Vulkan backend either: (a) implements row split differently — possibly deferring or batching communication; (b) uses a different synchronization primitive that maps better to PCIe transfers; or (c) the Vulkan split implementations for row and layer are effectively the same code path on this driver. The mechanism is **unknown** without inspecting the llama.cpp Vulkan backend source for multi-GPU allreduce.
-
-### Why any split hurts TG more for Vulkan than ROCm
-
-Vulkan TG drops 31% with layer split (31.0 → 21.2 t/s). ROCm TG drops only 7% (25.8 → 24.0 t/s). In layer split, each token's activation must cross from GPU 0 to GPU 1 **once per forward pass** through the PCIe 4.0 x8 link via the CPU. The transfer is small (~40 MB at the layer boundary), so bandwidth isn't the bottleneck — latency is. ROCm handles this via HIP peer memcpy with lower round-trip latency. Vulkan's inter-GPU transfer path appears higher-latency, so the fixed overhead is proportionally more expensive when per-token compute time is already short (~33–48 ms for a single token).
+Throughput decreases monotonically Q4 → Q5 → Q6, but the steps are not equal. Q4→Q5 is a modest trade: +2.4 GiB VRAM, −14% PP, −10% TG. Q5→Q6 is a worse deal: +5.1 GiB VRAM, −17% PP, −19% TG — more cost, more penalty, for one extra bit per weight. Q6 is not worth it.
 
 ---
 
-## 3. Practical Conclusions
+## 4. Causal Explanations
 
-### Best configuration by workload
+### Consistent with published findings
 
-**General serving (mixed prompt + generation):** ROCm + `--split-mode layer`
-- PP throughput at long context is dominant (up to 1800 t/s for Q4 at pp4096)
-- TG penalty is small (−7%), acceptable
-- Q4_K_XL gives the best absolute throughput
+**Vulkan single-GPU leads ROCm in token generation.**
+Confirmed independently. Phoronix measured ~22% faster TG for Vulkan over ROCm on the R9700; RDNA3 benchmarks show 15–27%. The root cause is documented in [ggml-org/llama.cpp#21043](https://github.com/ggml-org/llama.cpp/discussions/21043): the ROCm compiler generates suboptimal matrix kernels for gfx1201, achieving ~3.1 TFLOPS against an expected ~4.95 TFLOPS. A separate HIP idling bug keeps the GPU at elevated utilization between inference calls. Neither issue affects Vulkan.
 
-**Generation-heavy, short prompts (chat, interactive):** Vulkan + `--split-mode none`
-- Best raw generation speed (31 t/s Q4)
-- No multi-GPU benefit since PP at short context doesn't justify split overhead
-- Q4_K_XL again optimal
+**ROCm row split collapses on multi-GPU.**
+Documented in [ggml-org/llama.cpp#10682](https://github.com/ggml-org/llama.cpp/issues/10682) — identical behavior on other multi-GPU AMD setups, including garbled output in some cases. The mechanism: row split requires an allreduce across GPUs after every layer (62+ synchronizations per forward pass for this model). These traverse the CPU PCIe controller with no direct P2P path, and traffic bounces through CPU memory. Back-of-envelope: ~2.5 GB of reduce traffic per pp4096 forward pass over a ~16 GB/s link, before any compute. The allreduce overhead dominates entirely.
 
-**Row split:** Avoid with ROCm. Vulkan row is harmless but offers no advantage over Vulkan layer.
+**Splits hurt Vulkan TG more than ROCm TG.**
+Consistent with published reports: *"When using Vulkan with split mode Row or Layer, performance is significantly worse than split mode None… ROCm does not see a massive performance degradation from split mode None to Layer."* The mechanism is latency: in layer split, each token's activation crosses GPU boundaries once per forward pass (~40 MB). ROCm's HIP peer memcpy handles this with lower round-trip latency than Vulkan's inter-GPU transfer path. The fixed overhead is proportionally more damaging to Vulkan because its single-GPU TG baseline is already faster, leaving less compute time to hide the transfer.
 
-### Quant selection
+---
 
-Q4_K_XL is the practical choice:
-- Fits in one GPU with 16 GiB headroom for KV cache
-- Highest PP and TG absolute throughput
-- Q5 and Q6 offer diminishing returns: Q6 has 46% more weight data for a quality gain that is marginal on a 27B model already quantized to 6-bit
+### Not in published literature
 
-Q5 is a reasonable compromise if quality is the priority and the 2.4 GiB difference from Q4 is tolerable.
+**ROCm layer split outperforms Vulkan layer split for prompt processing (except Q6).**
+No published multi-GPU comparison on RDNA4 exists to validate or contradict this. The likely cause is `RADV_DEBUG=nocompute`, which forces Vulkan compute operations through the graphics queue rather than the async compute queue, degrading compute-bound throughput. The effect weakens at Q6 as the bottleneck shifts to memory bandwidth. Unconfirmed — requires a Vulkan run without `nocompute`.
 
-### What remains unknown
+**Vulkan row and layer splits are equivalent.**
+Not discussed in any published source. The Vulkan backend's row and layer implementations appear to converge to the same communication pattern on this driver — either row split is remapped internally, or the Vulkan multi-GPU allreduce avoids the per-layer synchronization cost that destroys ROCm row. The mechanism is unknown without reading the llama.cpp Vulkan multi-GPU source.
 
-1. **Effect of `RADV_DEBUG=nocompute` on Vulkan PP**: Is this the primary reason ROCm layer beats Vulkan layer, or is ROCm genuinely better at multi-GPU compute on gfx1201? A Vulkan run without this flag would answer it.
+---
 
-2. **Why Vulkan row split avoids the allreduce penalty**: The ROCm row split PP is catastrophic; Vulkan row is fine. This asymmetry is not explained by the benchmark data alone.
+### Contradicted finding
 
-3. **PCIe bandwidth saturation**: Whether the layer split improvement plateaus beyond pp4096, or whether even larger batches continue to scale.
+One report ([ggml-org/llama.cpp#21043](https://github.com/ggml-org/llama.cpp/discussions/21043)) describes a ~10× ROCm PP slowdown on gfx1201 for Qwen models attributed to a Delta Net kernel dispatch issue. This does not appear in our data — ROCm PP is competitive throughout. The discrepancy is likely a ROCm version difference; our build predates or postdates the affected version, or `RADV_DEBUG=nocompute` sidesteps the issue.
 
-4. **KV cache impact**: All benchmarks use `-p` tokens with presumably no KV cache retained. Real serving with long sessions and KV cache pressure will change the VRAM headroom picture, especially for Q6 at high concurrency.
+---
+
+## 5. Conclusions
+
+1. The second GPU is useful mainly for prompt ingestion, not for steady-state generation.
+
+Because all tested quants fit on a single 32 GB R9700, the second GPU is not needed for model residency. Its value is purely computational. In practice, that value appears only in prompt processing at medium and large batch/context sizes, where layer split can amortize inter-GPU communication. For single-user interactive chat dominated by token generation, one GPU is usually the better execution target.
+
+2. For single-stream inference, the best default is Vulkan + no split.
+
+Across all three quants, Vulkan / split=none gives the best token generation throughput, which is the metric users feel most directly during chat. Since generation latency dominates the perceived responsiveness of an interactive assistant, this should be treated as the default serving mode whenever the model fits on one card.
+
+3. For long-context prompt ingestion, the best mode is ROCm + layer split.
+
+At pp2048 and pp4096, ROCm / split=layer is clearly the best performer, and in some cases dramatically so. This makes it the right choice for workloads such as:
+
+- very long system prompts,
+- large-document ingestion,
+- heavy RAG context packing,
+- multi-thousand-token prefills before short answers.
+
+4. ROCm row split should be treated as effectively broken on this platform.
+
+Its prompt-processing behavior is not merely suboptimal; it is structurally wrong for this PCIe topology. Because the two GPUs communicate only through the CPU PCIe root complex, row split’s per-layer reduction traffic turns into a communication-bound regime that wipes out the theoretical benefit of parallelism. On this machine, ROCm row is not a tuning option; it is a failure mode.
+
+5. Vulkan multi-GPU split modes are usable, but strategically uninteresting.
+
+Vulkan row/layer split avoids the catastrophic collapse seen in ROCm row, but neither split mode preserves Vulkan’s single-GPU token-generation advantage. So Vulkan multi-GPU is not useless, but it does not produce a compelling “best of both worlds” result. It is a compromise mode, not an optimal one.
+
+6. Q5_K_XL is the rational quality/performance point.
+
+Q4 is the speed leader, but Q5 gives a moderate cost increase for a still-manageable throughput penalty. Q6, by contrast, consumes much more VRAM and loses too much speed for what is likely a marginal quality improvement relative to Q5. Unless a specific eval shows clear task-level gains, Q6 should be rejected as an inefficient point on the frontier. Therefore:
+
+- best speed: Q4_K_XL
+- best balanced choice: Q5_K_XL
+- not recommended: Q6_K_XL
+
+7. The machine’s real optimization target is workload routing, not one universal backend choice.
+
+These data do not support the idea that one backend/split combination is globally best. Instead, the system wants mode switching by workload:
+
+- Interactive chat / assistants / coding: Vulkan, no split, single GPU
+- Large prefills / long-document ingestion / batched prompt processing: ROCm, layer split, dual GPU
+- Avoid: ROCm row
+- Use Vulkan split only if operational constraints force multi-GPU under Vulkan
+
+8. The broader implication is architectural: when the model fits on one card, multi-GPU in llama.cpp is a prefill accelerator, not a general inference accelerator.
+
+That is the real lesson of this benchmark. On consumer AMD cards connected by PCIe without direct GPU-GPU interconnect, multi-GPU only helps when the compute batch is large enough to hide communication. It does not automatically improve end-user chat speed, and in some modes it makes it worse. The second GPU should therefore be understood as a specialized accelerator for prefills and larger concurrent workloads, not as a universal multiplier of performance.
+
+### Practical final recommendation
+
+For this exact platform:
+
+- Keep Q5_K_XL as the main daily-driver quant.
+- Use Vulkan + split none for normal interactive inference.
+- Use ROCm + layer split only for long-context or high-prefill workloads.
+- Do not use ROCm + row.
+- Treat Q6_K_XL as unjustified unless downstream evals prove otherwise
