@@ -1,5 +1,15 @@
 # Qwen3.5 27B Benchmark Analysis
 
+On PCIe-only dual-GPU consumer systems, multi-GPU in llama.cpp is not a universal accelerator but a conditional one, effective primarily for large-batch prompt processing.
+
+For this exact platform (2× AMD Radeon AI PRO R9700 on bifurcated PCIe v4 x8 + x8) and dense model fitting single GPU (Qwen3.5 27B):
+
+- Keep Q5_K_XL as the main daily-driver quant.
+- Use Vulkan + split none for normal interactive inference.
+- Use ROCm + layer split only for long-context or high-prefill workloads.
+- Do not use ROCm + row.
+- Treat Q6_K_XL as unjustified unless downstream evals prove otherwise
+
 ## 1. Environment
 
 **Motherboard:** ASUS ROG Strix X570-F Gaming
@@ -191,12 +201,3 @@ These data do not support the idea that one backend/split combination is globall
 
 That is the real lesson of this benchmark. On consumer AMD cards connected by PCIe without direct GPU-GPU interconnect, multi-GPU only helps when the compute batch is large enough to hide communication. It does not automatically improve end-user chat speed, and in some modes it makes it worse. The second GPU should therefore be understood as a specialized accelerator for prefills and larger concurrent workloads, not as a universal multiplier of performance.
 
-### Practical final recommendation
-
-For this exact platform:
-
-- Keep Q5_K_XL as the main daily-driver quant.
-- Use Vulkan + split none for normal interactive inference.
-- Use ROCm + layer split only for long-context or high-prefill workloads.
-- Do not use ROCm + row.
-- Treat Q6_K_XL as unjustified unless downstream evals prove otherwise
