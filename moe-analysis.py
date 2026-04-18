@@ -18,7 +18,7 @@ except ImportError:
 
 
 ROW_RE = re.compile(
-    r"\|\s*[^|]+\|\s*[\d.]+ GiB\s*\|\s*[\d.]+ B\s*\|\s*\w+\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\w+)\s*\|\s*(pp\d+|tg\d+)\s*\|\s*([\d.]+)\s*±"
+    r"\|\s*[^|]+\|\s*[\d.]+ GiB\s*\|\s*[\d.]+ B\s*\|\s*\w+\s*\|\s*\d+\s*\|\s*(\d+)\s*\|(?:\s*\d+\s*\|)?\s*(\d+)\s*\|\s*(\w+)\s*\|\s*(pp\d+|tg\d+)\s*\|\s*([\d.]+)\s*±"
 )
 
 def parse_file(path):
@@ -26,10 +26,9 @@ def parse_file(path):
     for line in Path(path).read_text().splitlines():
         m = ROW_RE.search(line)
         if m:
-            ngl, n_cpu_moe, n_batch, n_ubatch, sm, test, speed = m.groups()
+            n_cpu_moe, n_ubatch, sm, test, speed = m.groups()
             rows.append({
                 "n_cpu_moe": int(n_cpu_moe),
-                "n_batch":   int(n_batch),
                 "n_ubatch":  int(n_ubatch),
                 "sm":        sm.strip(),
                 "test":      test.strip(),
@@ -44,7 +43,7 @@ def correlations(df, metric):
     sub = df[df.test == metric].copy()
     sub["sm_num"] = (sub["sm"] == "layer").astype(int)
     results = {}
-    for col in ["n_cpu_moe", "n_batch", "n_ubatch", "sm_num"]:
+    for col in ["n_cpu_moe", "n_ubatch", "sm_num"]:
         r, p = spearmanr(sub[col], sub["t_s"])
         results[col] = (round(r, 3), round(p, 4))
     return results
@@ -55,7 +54,7 @@ def print_section(title, df):
     print(f"{'='*60}")
 
     metrics = ["pp512", "pp2048", "tg256"]
-    params  = ["n_cpu_moe", "n_ubatch", "n_batch", "sm"]
+    params  = ["n_cpu_moe", "n_ubatch", "sm"]
 
     print("\n--- Marginal means (t/s) ---")
     for param in params:
@@ -73,7 +72,7 @@ def print_section(title, df):
     print("\n--- Spearman correlation with t/s (r, p-value) ---")
     header = f"  {'param':>12}" + "".join(f"  {m:>18}" for m in metrics)
     print(header)
-    param_labels = {"n_cpu_moe": "n_cpu_moe", "n_batch": "n_batch", "n_ubatch": "n_ubatch", "sm_num": "sm (layer=1)"}
+    param_labels = {"n_cpu_moe": "n_cpu_moe", "n_ubatch": "n_ubatch", "sm_num": "sm (layer=1)"}
     for col, label in param_labels.items():
         row = f"  {label:>12}"
         for m in metrics:

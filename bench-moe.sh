@@ -4,35 +4,35 @@
 #                0 in n-cpu-moe list means no CPU MoE offload (baseline).
 #
 # Usage:
-#   ./bench-moe.sh [model] [sm] [n_cpu_moe] [pp] [tg] [ubatch]
+#   ./bench-moe.sh [sm] [model] [backends] [n_cpu_moe] [pp] [tg] [ubatch]
 #
-#   model      path to .gguf                        (default: models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf)
 #   sm         split modes, csv                     (default: none,layer)
+#   model      path to .gguf                        (default: models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf)
+#   backends   backends to run, csv                 (default: rocm,vulkan)
 #   n_cpu_moe  CPU MoE expert counts, csv; 0=GPU    (default: 0,4,8,16,32,999)
 #   pp         prompt token counts, csv             (default: 512,2048)
 #   tg         generation token counts, csv         (default: 256)
 #   ubatch     ubatch sizes, csv                    (default: 512,1024,2048)
 #
 # Env overrides:
-#   BACKENDS   backends to run, csv                 (default: rocm,vulkan)
 #   BENCH_FLAGS, REPORTS_DIR, OUTFILE
 #
 # Examples:
 #   ./bench-moe.sh
-#   ./bench-moe.sh models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf none,layer 0,4,8,16,32,999
-#   BACKENDS=rocm ./bench-moe.sh "" none
+#   ./bench-moe.sh none,layer models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf rocm,vulkan 0,4,8,16,32,999
+#   ./bench-moe.sh none "" rocm
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-MODEL="${1:-models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf}"
-SM="${2:-none,layer}"
-N_CPU_MOE_CSV="${3:-0,4,8,16,32,999}"
-PP_CSV="${4:-512,2048}"
-TG_CSV="${5:-256}"
-UB_CSV="${6:-512,1024,2048}"
-BACKENDS="${BACKENDS:-rocm,vulkan}"
+SM="${1:-none,layer}"
+MODEL="${2:-models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf}"
+BACKENDS="${3:-rocm,vulkan}"
+N_CPU_MOE_CSV="${4:-0,4,8,16,32,999}"
+PP_CSV="${5:-512,2048}"
+TG_CSV="${6:-256}"
+UB_CSV="${7:-512,1024,2048}"
 
 IFS=',' read -ra BACKEND_LIST   <<< "$BACKENDS"
 IFS=',' read -ra N_CPU_MOE_LIST <<< "$N_CPU_MOE_CSV"
