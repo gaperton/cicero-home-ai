@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bench-analysis.sh — Run the standard multi-backend analysis benchmark for a given model.
 #
-# Usage: ./bench-analysis.sh <model.gguf> [<model2.gguf> ...]
+# Usage: ./bench-analysis.sh [--moe] <model.gguf> [<model2.gguf> ...]
 #
 # Runs both ROCm and Vulkan backends with sm=none,layer,row at pp512/2048/4096 + tg256.
 # All quants write into one file: analysis/<model-name>-<timestamp>.md
@@ -20,8 +20,20 @@ VULKAN_BENCH="${VULKAN_BENCH:-./llama.cpp/llama-bench}"
 
 BENCH_FLAGS="-ngl 99 -fa 1 -p 512,2048,4096 -n 256 -r 2 -sm none,layer,row"
 
+MOE=0
+args=()
+for arg in "$@"; do
+    if [[ "$arg" == "--moe" ]]; then
+        MOE=1
+        BENCH_FLAGS="$BENCH_FLAGS --cpu-moe"
+    else
+        args+=("$arg")
+    fi
+done
+set -- "${args[@]+"${args[@]}"}"
+
 if [[ $# -eq 0 ]]; then
-    echo "Usage: $0 <model.gguf> [<model2.gguf> ...]" >&2
+    echo "Usage: $0 [--moe] <model.gguf> [<model2.gguf> ...]" >&2
     exit 1
 fi
 
