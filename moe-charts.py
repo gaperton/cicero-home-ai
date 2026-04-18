@@ -17,14 +17,27 @@ try:
 except ImportError:
     sys.exit("Install deps: pip install pandas matplotlib --break-system-packages")
 
-ROW_RE = re.compile(
+ROW_WITH_SM = re.compile(
     r"\|\s*[^|]+\|\s*[\d.]+ GiB\s*\|\s*[\d.]+ B\s*\|\s*(\w+)\s*\|\s*\d+\s*\|\s*(\d+)\s*\|(?:\s*\d+\s*\|)?\s*(\d+)\s*\|\s*(\w+)\s*\|\s*(pp\d+|tg\d+)\s*\|\s*([\d.]+)\s*±"
 )
+ROW_NO_SM = re.compile(
+    r"\|\s*[^|]+\|\s*[\d.]+ GiB\s*\|\s*[\d.]+ B\s*\|\s*(\w+)\s*\|\s*\d+\s*\|\s*(\d+)\s*\|(?:\s*\d+\s*\|)?\s*(\d+)\s*\|\s*(pp\d+|tg\d+)\s*\|\s*([\d.]+)\s*±"
+)
+SM_HDR      = re.compile(r"###\s*sm=(\w+)")
+BACKEND_HDR = re.compile(r"##\s*Backend:\s*(\w+)")
 
 def parse_file(path):
     rows = []
+    current_sm      = None
+    current_backend = None
     for line in Path(path).read_text().splitlines():
-        m = ROW_RE.search(line)
+        hb = BACKEND_HDR.search(line)
+        if hb:
+            current_backend = hb.group(1); continue
+        hs = SM_HDR.search(line)
+        if hs:
+            current_sm = hs.group(1); continue
+        m = ROW_WITH_SM.search(line)
         if m:
             backend, n_cpu_moe, n_ubatch, sm, test, speed = m.groups()
             rows.append({
@@ -32,6 +45,18 @@ def parse_file(path):
                 "n_cpu_moe": int(n_cpu_moe),
                 "n_ubatch":  int(n_ubatch),
                 "sm":        sm.strip(),
+                "test":      test.strip(),
+                "t_s":       float(speed),
+            })
+            continue
+        m = ROW_NO_SM.search(line)
+        if m:
+            backend, n_cpu_moe, n_ubatch, test, speed = m.groups()
+            rows.append({
+                "backend":   backend.strip(),
+                "n_cpu_moe": int(n_cpu_moe),
+                "n_ubatch":  int(n_ubatch),
+                "sm":        current_sm or "none",
                 "test":      test.strip(),
                 "t_s":       float(speed),
             })

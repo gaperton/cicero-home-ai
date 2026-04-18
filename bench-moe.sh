@@ -6,7 +6,8 @@
 # Usage:
 #   ./bench-moe.sh [sm] [model] [backends] [n_cpu_moe] [pp] [tg] [ubatch]
 #
-#   sm         split modes, csv                     (default: none,layer)
+#   sm         single | layer | all                 (default: all)
+#              single = sm=none only; layer = sm=layer only; all = both
 #   model      path to .gguf                        (default: models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf)
 #   backends   backends to run, csv                 (default: rocm,vulkan)
 #   n_cpu_moe  CPU MoE expert counts, csv; 0=GPU    (default: 0,4,8,16,32,999)
@@ -19,14 +20,14 @@
 #
 # Examples:
 #   ./bench-moe.sh
-#   ./bench-moe.sh none,layer models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf rocm,vulkan 0,4,8,16,32,999
-#   ./bench-moe.sh none "" rocm
+#   ./bench-moe.sh all models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf rocm,vulkan
+#   ./bench-moe.sh single "" rocm
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-SM="${1:-none,layer}"
+SM_ARG="${1:-all}"
 MODEL="${2:-models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf}"
 BACKENDS="${3:-rocm,vulkan}"
 N_CPU_MOE_CSV="${4:-0,4,8,16,32,999}"
@@ -34,9 +35,15 @@ PP_CSV="${5:-512,2048}"
 TG_CSV="${6:-256}"
 UB_CSV="${7:-512,1024,2048}"
 
+case "$SM_ARG" in
+    single) SPLIT_LIST=(none) ;;
+    layer)  SPLIT_LIST=(layer) ;;
+    all)    SPLIT_LIST=(none layer) ;;
+    *) echo "Error: sm must be single, layer, or all (got '$SM_ARG')" >&2; exit 1 ;;
+esac
+
 IFS=',' read -ra BACKEND_LIST   <<< "$BACKENDS"
 IFS=',' read -ra N_CPU_MOE_LIST <<< "$N_CPU_MOE_CSV"
-IFS=',' read -ra SPLIT_LIST     <<< "$SM"
 IFS=',' read -ra PP_LIST        <<< "$PP_CSV"
 IFS=',' read -ra TG_LIST        <<< "$TG_CSV"
 IFS=',' read -ra UB_LIST        <<< "$UB_CSV"
@@ -54,8 +61,7 @@ fi
 
 mkdir -p "$REPORTS_DIR"
 
-# --- Build flag arrays (same for all backends) ---
-sm_flags=();    for v in "${SPLIT_LIST[@]}";     do sm_flags+=(-sm "$v");           done
+# --- Build flag arrays (same for all backends/sm) ---
 moe_flags=();   for v in "${N_CPU_MOE_LIST[@]}"; do moe_flags+=(--n-cpu-moe "$v"); done
 pp_flags=();    for v in "${PP_LIST[@]}";         do pp_flags+=(-p "$v");            done
 tg_flags=();    for v in "${TG_LIST[@]}";         do tg_flags+=(-n "$v");            done
@@ -64,7 +70,7 @@ ub_flags=();    for v in "${UB_LIST[@]}";         do ub_flags+=(-ub "$v");      
 
 echo "=== MoE bench — $MODEL_LABEL — $(date) ==="
 echo "Backends:    $BACKENDS"
-echo "split (SM):  $SM"
+echo "split (SM):  $SM_ARG (${SPLIT_LIST[*]})"
 echo "n-cpu-moe:   $N_CPU_MOE_CSV"
 echo "pp:          $PP_CSV"
 echo "tg:          $TG_CSV"
@@ -79,7 +85,7 @@ echo
     echo "| | |"
     echo "|---|---|"
     echo "| **Model** | $MODEL_LABEL |"
-    echo "| **SM** | $SM |"
+    echo "| **SM** | $SM_ARG (${SPLIT_LIST[*]}) |"
     echo "| **n-cpu-moe** | $N_CPU_MOE_CSV |"
     echo "| **pp** | $PP_CSV |"
     echo "| **tg** | $TG_CSV |"
@@ -123,14 +129,16 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
         echo
     } | tee -a "$OUTFILE"
 
-    cmd=("$BENCH" $BENCH_FLAGS "${sm_flags[@]}" "${moe_flags[@]}" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
-    echo "$ ${cmd[*]}"
-    echo
-    "${cmd[@]}" | tee -a "$OUTFILE"
-    echo | tee -a "$OUTFILE"
-
-    echo "--- $BACKEND done ---"
-    echo
+    for SM_VAL in "${SPLIT_LIST[@]}"; do
+        { echo; echo "### sm=$SM_VAL"; echo; } | tee -a "$OUTFILE"
+        cmd=("$BENCH" $BENCH_FLAGS -sm "$SM_VAL" "${moe_flags[@]}" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
+        echo "$ ${cmd[*]}"
+        echo
+        "${cmd[@]}" | tee -a "$OUTFILE"
+        echo | tee -a "$OUTFILE"
+        echo "--- $BACKEND sm=$SM_VAL done ---"
+        echo
+    done
 done
 
 echo "=== Done ===" | tee -a "$OUTFILE"
