@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # bench.sh — Run one combined benchmark report: GPU 0, GPU 1, split=layer, split=row for all configured models.
+#   ./bench.sh [vulkan|rocm]   # backend defaults to vulkan
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-BENCH="${BENCH:-RADV_DEBUG=nocompute ./llama.cpp/llama-bench}"
+BACKEND="${1:-vulkan}"
+
+LLAMA_DIR="$SCRIPT_DIR/llama-$BACKEND"
+[[ "$BACKEND" == "vulkan" ]] && export RADV_DEBUG=nocompute
+
+
+BENCH="${BENCH:-$LLAMA_DIR/llama-bench}"
 BENCH_FLAGS="${BENCH_FLAGS:--ngl 99 -fa on -r 3}"
 REPORTS_DIR="${REPORTS_DIR:-reports}"
 OUTFILE="${OUTFILE:-$REPORTS_DIR/bench-$(date +%Y%m%d-%H%M%S).md}"
 
 if [[ ! -x "$BENCH" ]]; then
-    echo "Error: $BENCH not found. Run install.sh or update.sh first." >&2
+    echo "Error: $BENCH not found. Run update.sh $BACKEND first." >&2
     exit 1
 fi
 
@@ -19,8 +26,7 @@ mkdir -p "$REPORTS_DIR"
 
 MODELS=(
     "Qwen 3.5 27B · UD-Q5_K_XL|models/Qwen3.5-27B-UD-Q5_K_XL.gguf"
-    "Qwen 3.5 35B-A3B · UD-Q5_K_XL|models/Qwen3.5-35B-A3B-UD-Q5_K_XL.gguf"
-    "GLM-4.7 Flash · UD-Q5_K_XL|models/GLM-4.7-Flash-UD-Q5_K_XL.gguf"
+    "Qwen 3.6 35B-A3B · UD-Q5_K_XL|models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf"
     "Gemma 4 31B · UD-Q5_K_XL|models/gemma-4-31B-it-UD-Q5_K_XL.gguf"
 )
 
@@ -39,7 +45,7 @@ write_system_info() {
     vulkan_ver=$(vulkaninfo --summary 2>/dev/null | awk '/Vulkan Instance Version/{print $NF; exit}' || echo "N/A")
     kernel=$(uname -r)
     ram=$(awk '/^MemTotal:/{printf "%.0f GiB", $2/1024/1024}' /proc/meminfo)
-    llama_ver=$(git -C llama.cpp log -1 --format="%h (%cd)" --date=short 2>/dev/null || echo "N/A")
+    llama_ver=$(git -C "$LLAMA_DIR" log -1 --format="%h (%cd)" --date=short 2>/dev/null || echo "N/A")
 
     {
         echo "# Benchmark Report — $(date)"
@@ -88,10 +94,6 @@ for entry in "${MODELS[@]}"; do
     label="${entry%%|*}"
     model="${entry##*|}"
 
-    run_bench_section "## $label · GPU 0 only" -dev Vulkan0 -m "$model"
-    run_bench_section "## $label · GPU 1 only" -dev Vulkan1 -m "$model"
-    run_bench_section "## $label · split=layer" -sm layer -m "$model"
-    run_bench_section "## $label · split=row" -sm row -m "$model"
-done
+    run_bench_section "## $label · GPU 0 only" -dev Vulkan0 -m "$model"    run_bench_section "## $label · GPU 1 only" -dev Vulkan1 -m "$model"    run_bench_section "## $label · split=layer" -sm layer -m "$model"    run_bench_section "## $label · split=row" -sm row -m "$model"done
 
 echo "=== Done ==="

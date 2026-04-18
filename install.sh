@@ -17,6 +17,7 @@ sudo -u "$SUDO_USER" pipx install open-webui
 sudo -u "$SUDO_USER" pipx install uv
 sudo -u "$SUDO_USER" pipx ensurepath
 
-# Clone llama.cpp and fix ownership (cloned as root, owned by user)
-git clone https://github.com/ggml-org/llama.cpp
-chown -R "$SUDO_USER:$SUDO_USER" llama.cpp
+# Clone two llama.cpp checkouts (one per backend) and fix ownership
+git clone https://github.com/ggml-org/llama.cpp llama-vulkan
+git clone https://github.com/ggml-org/llama.cpp llama-rocm
+chown -R "$SUDO_USER:$SUDO_USER" llama-vulkan llama-rocm

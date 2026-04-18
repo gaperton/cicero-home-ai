@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # run.sh — Update llama.cpp & models, then start llama-server in router mode.
-#   ./run.sh          # run directly
-#   See run-tmux.sh   # run in tmux with mc
+#   ./run.sh [vulkan|rocm]   # backend defaults to vulkan
+#   See run-tmux.sh          # run in tmux with mc
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+source .env
 
 # Start MCP proxy — wraps stdio MCP servers as streamable HTTP on :8200 (for llama-server webui)
 mcp-proxy --port 8200 --transport streamablehttp --named-server-config "$SCRIPT_DIR/mcp-config.json" &
@@ -28,9 +29,16 @@ if [[ -f "$SCRIPT_DIR/webui-config.json" ]]; then
     WEBUI_CONFIG_ARGS=(--webui-config-file "$SCRIPT_DIR/webui-config.json")
 fi
 
-RADV_DEBUG=nocompute ./llama.cpp/llama-server \
-    --host 0.0.0.0 --port 8080 \
-    --models-preset models.ini \
-    --models-max 1 \
-    --webui-mcp-proxy \
+BACKEND="${1:-vulkan}"
+LLAMA_DIR="$SCRIPT_DIR/llama-$BACKEND"
+
+# RADV_DEBUG=nocompute suppresses a spurious AMD Vulkan warning, only needed for Vulkan
+[[ "$BACKEND" == "vulkan" ]] && export RADV_DEBUG=nocompute
+
+SERVER_FLAGS_BACKEND="SERVER_FLAGS_${BACKEND^^}"
+
+# shellcheck disable=SC2086
+"$LLAMA_DIR/llama-server" \
+    $SERVER_FLAGS_COMMON \
+    ${!SERVER_FLAGS_BACKEND} \
     "${WEBUI_CONFIG_ARGS[@]}"
