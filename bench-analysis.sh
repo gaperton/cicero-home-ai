@@ -25,7 +25,7 @@ args=()
 for arg in "$@"; do
     if [[ "$arg" == "--moe" ]]; then
         MOE=1
-        BENCH_FLAGS="$BENCH_FLAGS --cpu-moe"
+        BENCH_FLAGS="$BENCH_FLAGS --n-cpu-moe 999"
     else
         args+=("$arg")
     fi
