@@ -102,14 +102,17 @@ case "$MODE" in
     fit)
         MODE_TITLE="Full-VRAM Baseline"
         MODE_NOTE="Measures the baseline configuration with the model kept on GPU and no MoE CPU-offload sweep."
+        MODE_PURPOSE="Purpose: establish the reference throughput for this model and quant when placement is straightforward and nothing is being intentionally pushed to CPU."
         ;;
     fit-moe)
         MODE_TITLE="MoE CPU-Offload Sweep"
         MODE_NOTE="Sweeps \`--n-cpu-moe\` to show how moving experts to CPU affects throughput."
+        MODE_PURPOSE="Purpose: measure the cost of MoE expert offload and show how throughput changes as more experts are forced out of VRAM."
         ;;
     no-fit-moe)
         MODE_TITLE="No-Fit vs Fit-Target"
         MODE_NOTE="Compares a heavy MoE CPU-offload setup with and without automatic fit-target placement."
+        MODE_PURPOSE="Purpose: test a hard placement case and show whether automatic fit-target placement recovers performance versus a naive CPU-offloaded setup."
         ;;
 esac
 
@@ -183,6 +186,8 @@ echo
     echo
     echo "${SCOPE_NOTE} ${MODE_NOTE}"
     echo
+    echo "${MODE_PURPOSE}"
+    echo
     echo "- Run time: ${RUN_DATE_HUMAN}"
     echo "- Prompt sweep: \`${PP_CSV}\`"
     echo "- Generation length: \`${TG_CSV}\`"
@@ -195,6 +200,14 @@ echo
         echo "- MoE offload: \`--n-cpu-moe ${NO_FIT_N_CPU_MOE}\`"
         echo "- Fit target comparison: off vs \`${FIT_TARGET_MIB} MiB\`"
     fi
+    echo
+    echo "## How To Read This Report"
+    echo
+    echo "- \`pp512\` and \`pp2048\` are prompt-processing throughput tests; they show how fast the model consumes a 512-token or 2048-token prompt."
+    echo "- \`tg256\` is token-generation throughput over 256 generated tokens; it is the closest metric here to interactive decoding speed."
+    echo "- \`n_ubatch\` is the prompt microbatch size; larger values usually help prompt-processing throughput more than generation throughput."
+    echo "- \`n_cpu_moe\` is the number of MoE experts forced to CPU RAM; higher values mean more CPU/RAM/PCIe involvement and usually lower speed."
+    echo "- \`fitt\` means llama.cpp automatically adjusts placement to fit available VRAM while leaving the requested free-memory margin."
     echo
     echo "| | |"
     echo "|---|---|"
@@ -275,7 +288,13 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
     } | tee -a "$OUTFILE"
 
     if [[ "$MODE" == "fit" ]]; then
-        { echo; echo "### Baseline Run"; echo; } | tee -a "$OUTFILE"
+        {
+            echo
+            echo "### Baseline Run"
+            echo
+            echo "Reference test for this scope and backend. Use it to compare backends and ubatch sizes without any intentional MoE CPU-offload or fit-target logic."
+            echo
+        } | tee -a "$OUTFILE"
         cmd=("$BENCH" $BENCH_FLAGS -sm "$SPLIT_MODE" "${SCOPE_FLAGS[@]}" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
         echo "$ ${cmd[*]}"
         echo
@@ -292,6 +311,8 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
             echo "### MoE CPU-Offload Sweep"
             echo
             echo "Sweeping \`--n-cpu-moe\` across \`${N_CPU_MOE_CSV}\` while keeping the rest of the benchmark settings fixed."
+            echo
+            echo "This is the sensitivity test: it shows how much performance is lost as more MoE experts are forced into CPU RAM instead of staying resident in VRAM."
             echo
         } | tee -a "$OUTFILE"
         cmd=("$BENCH" $BENCH_FLAGS -sm "$SPLIT_MODE" "${SCOPE_FLAGS[@]}" --n-cpu-moe "$N_CPU_MOE_CSV" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
@@ -316,6 +337,12 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
             echo "### ${LABEL}"
             echo
             echo "${NOTE}"
+            echo
+            if [[ -n "$FIT_FLAGS" ]]; then
+                echo "This is the recovery case: compare it against the no-fit-target run to see whether llama.cpp's automatic placement makes a difficult model placement fast again."
+            else
+                echo "This is the control case for a difficult placement: it shows performance when the model is pushed toward CPU-offloaded MoE execution without help from fit-target placement."
+            fi
             echo
         } | tee -a "$OUTFILE"
         cmd=("$BENCH" $BENCH_FLAGS -sm "$SPLIT_MODE" "${SCOPE_FLAGS[@]}" --n-cpu-moe "$NO_FIT_N_CPU_MOE" $FIT_FLAGS "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
