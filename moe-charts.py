@@ -17,49 +17,65 @@ try:
 except ImportError:
     sys.exit("Install deps: pip install pandas matplotlib --break-system-packages")
 
-ROW_WITH_SM = re.compile(
-    r"\|\s*[^|]+\|\s*[\d.]+ GiB\s*\|\s*[\d.]+ B\s*\|\s*(\w+)\s*\|\s*\d+\s*\|\s*(\d+)\s*\|(?:\s*\d+\s*\|)?\s*(\d+)\s*\|\s*(\w+)\s*\|\s*(pp\d+|tg\d+)\s*\|\s*([\d.]+)\s*±"
-)
-ROW_NO_SM = re.compile(
-    r"\|\s*[^|]+\|\s*[\d.]+ GiB\s*\|\s*[\d.]+ B\s*\|\s*(\w+)\s*\|\s*\d+\s*\|\s*(\d+)\s*\|(?:\s*\d+\s*\|)?\s*(\d+)\s*\|\s*(pp\d+|tg\d+)\s*\|\s*([\d.]+)\s*±"
-)
-SM_HDR      = re.compile(r"###\s*sm=(\w+)")
+_PRE  = r"\|\s*[^|]+\|\s*[\d.]+ GiB\s*\|\s*[\d.]+ B\s*\|\s*\w+\s*\|\s*\d+\s*\|(?:\s*\d+\s*\|)?\s*"
+_NUM  = r"(\d+)\s*\|"
+_SM   = r"\s*([a-zA-Z]\w*)\s*\|"
+_TEST = r"\s*(pp\d+|tg\d+)\s*\|\s*([\d.]+)\s*±"
+
+ROW_SM_FITT = re.compile(_PRE + _NUM + _SM + _NUM + _TEST)
+ROW_SM      = re.compile(_PRE + _NUM + _SM + _TEST)
+ROW_FITT    = re.compile(_PRE + _NUM + _NUM + _TEST)
+ROW_PLAIN   = re.compile(_PRE + _NUM + _TEST)
+
 BACKEND_HDR = re.compile(r"##\s*Backend:\s*(\w+)")
+SM_HDR      = re.compile(r"###\s*sm=(\w+)")
+FITT_HDR    = re.compile(r"####.*-fitt\s+(\d+)")
+NO_FITT_HDR = re.compile(r"####.*no\s+-?fitt", re.IGNORECASE)
 
 def parse_file(path):
     rows = []
-    current_sm      = None
     current_backend = None
+    current_sm      = None
+    current_fitt    = 0
+
     for line in Path(path).read_text().splitlines():
-        hb = BACKEND_HDR.search(line)
-        if hb:
-            current_backend = hb.group(1); continue
-        hs = SM_HDR.search(line)
-        if hs:
-            current_sm = hs.group(1); continue
-        m = ROW_WITH_SM.search(line)
-        if m:
-            backend, n_cpu_moe, n_ubatch, sm, test, speed = m.groups()
-            rows.append({
-                "backend":   backend.strip(),
-                "n_cpu_moe": int(n_cpu_moe),
-                "n_ubatch":  int(n_ubatch),
-                "sm":        sm.strip(),
-                "test":      test.strip(),
-                "t_s":       float(speed),
-            })
+        if BACKEND_HDR.search(line):
+            current_backend = BACKEND_HDR.search(line).group(1); continue
+        if SM_HDR.search(line):
+            current_sm = SM_HDR.search(line).group(1); continue
+        if NO_FITT_HDR.search(line):
+            current_fitt = 0; continue
+        if FITT_HDR.search(line):
+            current_fitt = int(FITT_HDR.search(line).group(1)); continue
+
+        nc = re.search(r"\|\s*\d+\s*\|\s*(\d+)\s*\|", line)
+        if not nc:
             continue
-        m = ROW_NO_SM.search(line)
-        if m:
-            backend, n_cpu_moe, n_ubatch, test, speed = m.groups()
-            rows.append({
-                "backend":   backend.strip(),
-                "n_cpu_moe": int(n_cpu_moe),
+        n_cpu_moe = int(nc.group(1))
+
+        def make_row(n_ubatch, sm, fitt, test, speed):
+            return {
+                "backend":   current_backend or "unknown",
+                "n_cpu_moe": n_cpu_moe,
                 "n_ubatch":  int(n_ubatch),
-                "sm":        current_sm or "none",
+                "sm":        sm,
+                "fitt":      int(fitt),
                 "test":      test.strip(),
                 "t_s":       float(speed),
-            })
+            }
+
+        m = ROW_SM_FITT.search(line)
+        if m:
+            rows.append(make_row(m.group(1), m.group(2).strip(), m.group(3), m.group(4), m.group(5))); continue
+        m = ROW_SM.search(line)
+        if m:
+            rows.append(make_row(m.group(1), m.group(2).strip(), current_fitt, m.group(3), m.group(4))); continue
+        m = ROW_FITT.search(line)
+        if m:
+            rows.append(make_row(m.group(1), current_sm or "none", m.group(2), m.group(3), m.group(4))); continue
+        m = ROW_PLAIN.search(line)
+        if m:
+            rows.append(make_row(m.group(1), current_sm or "none", current_fitt, m.group(2), m.group(3)))
     return rows
 
 def setup_ax(ax, title, xlabel, ylabel):

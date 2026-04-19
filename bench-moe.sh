@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 # bench-moe.sh — Benchmark a single MoE model on all configured backends.
-#                Cartesian product: split × n-cpu-moe × pp × tg × ubatch.
-#                0 in n-cpu-moe list means no CPU MoE offload (baseline).
 #
 # Usage:
-#   ./bench-moe.sh [sm] [model] [backends] [n_cpu_moe] [pp] [tg] [ubatch]
+#   ./bench-moe.sh [sm] [model] [mode] [backends] [pp] [tg] [ubatch]
 #
-#   sm         single | layer | all                 (default: all)
-#              single = sm=none only; layer = sm=layer only; all = both
-#   model      path to .gguf                        (default: models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf)
-#   backends   backends to run, csv                 (default: rocm,vulkan)
-#   n_cpu_moe  CPU MoE expert counts, csv; 0=GPU    (default: 0,4,8,16,32,999)
-#   pp         prompt token counts, csv             (default: 512,2048)
-#   tg         generation token counts, csv         (default: 256)
-#   ubatch     ubatch sizes, csv                    (default: 512,1024,2048)
+#   sm         single | layer | all   (default: all)
+#              single = sm=none; layer = sm=layer; all = both
+#   model      path to .gguf          (default: models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf)
+#   mode       full | fitt            (default: full)
+#              full = sweep n_cpu_moe 0,4,8,16,32,999
+#              fitt = n_cpu_moe=999 only, run without and with --fitt 512
+#   backends   csv                    (default: rocm,vulkan)
+#   pp         prompt counts, csv     (default: 512,2048)
+#   tg         gen counts, csv        (default: 256)
+#   ubatch     ubatch sizes, csv      (default: 512,1024,2048)
 #
 # Env overrides:
 #   BENCH_FLAGS, REPORTS_DIR, OUTFILE
 #
 # Examples:
 #   ./bench-moe.sh
-#   ./bench-moe.sh all models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf rocm,vulkan
-#   ./bench-moe.sh single "" rocm
+#   ./bench-moe.sh all "" fitt rocm,vulkan
+#   ./bench-moe.sh single "" full rocm
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,8 +29,8 @@ cd "$SCRIPT_DIR"
 
 SM_ARG="${1:-all}"
 MODEL="${2:-models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf}"
-BACKENDS="${3:-rocm,vulkan}"
-N_CPU_MOE_CSV="${4:-0,4,8,16,32,999}"
+MODE="${3:-full}"
+BACKENDS="${4:-rocm,vulkan}"
 PP_CSV="${5:-512,2048}"
 TG_CSV="${6:-256}"
 UB_CSV="${7:-512,1024,2048}"
@@ -42,8 +42,13 @@ case "$SM_ARG" in
     *) echo "Error: sm must be single, layer, or all (got '$SM_ARG')" >&2; exit 1 ;;
 esac
 
-IFS=',' read -ra BACKEND_LIST   <<< "$BACKENDS"
-IFS=',' read -ra N_CPU_MOE_LIST <<< "$N_CPU_MOE_CSV"
+case "$MODE" in
+    full) N_CPU_MOE_LIST=(0 4 8 16 32 999) ;;
+    fitt) N_CPU_MOE_LIST=(999) ;;
+    *) echo "Error: mode must be full or fitt (got '$MODE')" >&2; exit 1 ;;
+esac
+
+IFS=',' read -ra BACKEND_LIST <<< "$BACKENDS"
 IFS=',' read -ra PP_LIST        <<< "$PP_CSV"
 IFS=',' read -ra TG_LIST        <<< "$TG_CSV"
 IFS=',' read -ra UB_LIST        <<< "$UB_CSV"
@@ -71,7 +76,7 @@ ub_flags=();    for v in "${UB_LIST[@]}";         do ub_flags+=(-ub "$v");      
 echo "=== MoE bench — $MODEL_LABEL — $(date) ==="
 echo "Backends:    $BACKENDS"
 echo "split (SM):  $SM_ARG (${SPLIT_LIST[*]})"
-echo "n-cpu-moe:   $N_CPU_MOE_CSV"
+echo "mode:        $MODE"
 echo "pp:          $PP_CSV"
 echo "tg:          $TG_CSV"
 echo "ubatch:      $UB_CSV"
@@ -86,7 +91,7 @@ echo
     echo "|---|---|"
     echo "| **Model** | $MODEL_LABEL |"
     echo "| **SM** | $SM_ARG (${SPLIT_LIST[*]}) |"
-    echo "| **n-cpu-moe** | $N_CPU_MOE_CSV |"
+    echo "| **mode** | $MODE |"
     echo "| **pp** | $PP_CSV |"
     echo "| **tg** | $TG_CSV |"
     echo "| **ubatch** | $UB_CSV |"
@@ -131,11 +136,26 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
 
     for SM_VAL in "${SPLIT_LIST[@]}"; do
         { echo; echo "### sm=$SM_VAL"; echo; } | tee -a "$OUTFILE"
-        cmd=("$BENCH" $BENCH_FLAGS -sm "$SM_VAL" "${moe_flags[@]}" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
-        echo "$ ${cmd[*]}"
-        echo
-        "${cmd[@]}" | tee -a "$OUTFILE"
-        echo | tee -a "$OUTFILE"
+
+        if [[ "$MODE" == "fitt" ]]; then
+            # Run n_cpu_moe=999 without -fitt, then with -fitt 512
+            for fitt_flags in "" "-fitt 512"; do
+                local_label="${fitt_flags:-no -fitt}"
+                { echo; echo "#### $local_label"; echo; } | tee -a "$OUTFILE"
+                cmd=("$BENCH" $BENCH_FLAGS -sm "$SM_VAL" --n-cpu-moe 999 $fitt_flags "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
+                echo "$ ${cmd[*]}"
+                echo
+                "${cmd[@]}" | tee -a "$OUTFILE"
+                echo | tee -a "$OUTFILE"
+            done
+        else
+            cmd=("$BENCH" $BENCH_FLAGS -sm "$SM_VAL" "${moe_flags[@]}" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
+            echo "$ ${cmd[*]}"
+            echo
+            "${cmd[@]}" | tee -a "$OUTFILE"
+            echo | tee -a "$OUTFILE"
+        fi
+
         echo "--- $BACKEND sm=$SM_VAL done ---"
         echo
     done
