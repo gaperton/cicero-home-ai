@@ -11,7 +11,7 @@
 # Mode:
 #   fit        = full-VRAM test, no --n-cpu-moe
 #   fit-moe    = full-VRAM test, sweep --n-cpu-moe 0,4,8,16,32,64
-#   no-fit-moe = auto-fit test with --fit-target 512
+#   no-fit-moe = --n-cpu-moe 999, run without and with --fit-target 512
 #
 # Defaults:
 #   model    = models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf
@@ -23,6 +23,7 @@
 # Env overrides:
 #   BENCH_FLAGS      default: -ngl 999 -fa on -r 3 -b 2048
 #   FIT_TARGET_MIB   default: 512
+#   NO_FIT_N_CPU_MOE default: 999
 #   REPORTS_DIR      default: moe-reports (base dir; model subdir is added automatically)
 #   OUTFILE
 set -euo pipefail
@@ -66,6 +67,7 @@ case "$SCOPE" in
 esac
 
 FIT_TARGET_MIB="${FIT_TARGET_MIB:-512}"
+NO_FIT_N_CPU_MOE="${NO_FIT_N_CPU_MOE:-999}"
 
 case "$MODE" in
     fit)
@@ -77,11 +79,37 @@ case "$MODE" in
         N_CPU_MOE_CSV="$(IFS=,; echo "${N_CPU_MOE_LIST[*]}")"
         ;;
     no-fit-moe)
-        MODE_DESC="auto-fit MoE with --fit-target"
+        MODE_DESC="--n-cpu-moe ${NO_FIT_N_CPU_MOE}, run without and with --fit-target"
         ;;
     *)
         echo "Error: mode must be fit, fit-moe, or no-fit-moe (got '$MODE')" >&2
         exit 1
+        ;;
+esac
+
+case "$SCOPE" in
+    single)
+        SCOPE_TITLE="Single GPU"
+        SCOPE_NOTE="Forces the model onto one GPU with \`-sm none -mg 0\`."
+        ;;
+    all)
+        SCOPE_TITLE="All GPUs"
+        SCOPE_NOTE="Uses layer split across all visible GPUs with \`-sm layer\`."
+        ;;
+esac
+
+case "$MODE" in
+    fit)
+        MODE_TITLE="Full-VRAM Baseline"
+        MODE_NOTE="Measures the baseline configuration with the model kept on GPU and no MoE CPU-offload sweep."
+        ;;
+    fit-moe)
+        MODE_TITLE="MoE CPU-Offload Sweep"
+        MODE_NOTE="Sweeps \`--n-cpu-moe\` to show how moving experts to CPU affects throughput."
+        ;;
+    no-fit-moe)
+        MODE_TITLE="No-Fit vs Fit-Target"
+        MODE_NOTE="Compares a heavy MoE CPU-offload setup with and without automatic fit-target placement."
         ;;
 esac
 
@@ -145,12 +173,28 @@ echo "tg:          $TG_CSV"
 echo "ubatch:      $UB_CSV"
 if [[ "$MODE" == "no-fit-moe" ]]; then
     echo "fit-target:  ${FIT_TARGET_MIB} MiB"
+    echo "n-cpu-moe:   ${NO_FIT_N_CPU_MOE}"
 fi
 echo "saving to:   $OUTFILE"
 echo
 
 {
-    echo "# $SCOPE $MODE $QUANT_NAME $MODEL_NAME $RUN_DATE_HUMAN"
+    echo "# ${SCOPE_TITLE} ${MODE_TITLE} — ${MODEL_NAME} (${QUANT_NAME})"
+    echo
+    echo "${SCOPE_NOTE} ${MODE_NOTE}"
+    echo
+    echo "- Run time: ${RUN_DATE_HUMAN}"
+    echo "- Prompt sweep: \`${PP_CSV}\`"
+    echo "- Generation length: \`${TG_CSV}\`"
+    echo "- Ubatch sweep: \`${UB_CSV}\`"
+    echo "- Core bench flags: \`${BENCH_FLAGS}\`"
+    if [[ "$MODE" == "fit-moe" ]]; then
+        echo "- MoE sweep: \`--n-cpu-moe ${N_CPU_MOE_CSV}\`"
+    fi
+    if [[ "$MODE" == "no-fit-moe" ]]; then
+        echo "- MoE offload: \`--n-cpu-moe ${NO_FIT_N_CPU_MOE}\`"
+        echo "- Fit target comparison: off vs \`${FIT_TARGET_MIB} MiB\`"
+    fi
     echo
     echo "| | |"
     echo "|---|---|"
@@ -165,6 +209,7 @@ echo
     echo "| **ubatch** | $UB_CSV |"
     if [[ "$MODE" == "no-fit-moe" ]]; then
         echo "| **fit-target** | ${FIT_TARGET_MIB} MiB |"
+        echo "| **n-cpu-moe** | ${NO_FIT_N_CPU_MOE} |"
     fi
     echo
 } | tee "$OUTFILE"
@@ -184,6 +229,21 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
         unset RADV_DEBUG 2>/dev/null || true
     fi
 
+    case "$BACKEND" in
+        rocm)
+            BACKEND_TITLE="ROCm"
+            BACKEND_NOTE="AMD ROCm backend."
+            ;;
+        vulkan)
+            BACKEND_TITLE="Vulkan"
+            BACKEND_NOTE="Vulkan backend with \`RADV_DEBUG=nocompute\`."
+            ;;
+        *)
+            BACKEND_TITLE="$BACKEND"
+            BACKEND_NOTE="Benchmark results for the ${BACKEND} backend."
+            ;;
+    esac
+
     devices_info=$("$BENCH" --list-devices 2>&1)
     gpu_lines=$(echo "$devices_info" | awk '
         /^  (Vulkan|CUDA|ROCm|Metal)[0-9]:/{
@@ -201,7 +261,9 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
     llama_ver=$(git -C "$LLAMA_DIR" log -1 --format="%h (%cd)" --date=short 2>/dev/null || echo "N/A")
 
     {
-        echo "## Backend: $BACKEND"
+        echo "## ${BACKEND_TITLE}"
+        echo
+        echo "${BACKEND_NOTE}"
         echo
         echo "| | |"
         echo "|---|---|"
@@ -213,6 +275,7 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
     } | tee -a "$OUTFILE"
 
     if [[ "$MODE" == "fit" ]]; then
+        { echo; echo "### Baseline Run"; echo; } | tee -a "$OUTFILE"
         cmd=("$BENCH" $BENCH_FLAGS -sm "$SPLIT_MODE" "${SCOPE_FLAGS[@]}" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
         echo "$ ${cmd[*]}"
         echo
@@ -224,7 +287,13 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
     fi
 
     if [[ "$MODE" == "fit-moe" ]]; then
-        { echo; echo "### n_cpu_moe=$N_CPU_MOE_CSV"; echo; } | tee -a "$OUTFILE"
+        {
+            echo
+            echo "### MoE CPU-Offload Sweep"
+            echo
+            echo "Sweeping \`--n-cpu-moe\` across \`${N_CPU_MOE_CSV}\` while keeping the rest of the benchmark settings fixed."
+            echo
+        } | tee -a "$OUTFILE"
         cmd=("$BENCH" $BENCH_FLAGS -sm "$SPLIT_MODE" "${SCOPE_FLAGS[@]}" --n-cpu-moe "$N_CPU_MOE_CSV" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
         echo "$ ${cmd[*]}"
         echo
@@ -235,12 +304,26 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
         continue
     fi
 
-    { echo; echo "### fit-target=${FIT_TARGET_MIB}"; echo; } | tee -a "$OUTFILE"
-    cmd=("$BENCH" $BENCH_FLAGS -sm "$SPLIT_MODE" "${SCOPE_FLAGS[@]}" -fitt "$FIT_TARGET_MIB" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
-    echo "$ ${cmd[*]}"
-    echo
-    "${cmd[@]}" | tee -a "$OUTFILE"
-    echo | tee -a "$OUTFILE"
+    for FIT_FLAGS in "" "-fitt $FIT_TARGET_MIB"; do
+        LABEL="No Fit Target"
+        NOTE="Runs \`--n-cpu-moe ${NO_FIT_N_CPU_MOE}\` without automatic fitting."
+        if [[ -n "$FIT_FLAGS" ]]; then
+            LABEL="With Fit Target ${FIT_TARGET_MIB} MiB"
+            NOTE="Runs \`--n-cpu-moe ${NO_FIT_N_CPU_MOE}\` with \`-fitt ${FIT_TARGET_MIB}\`."
+        fi
+        {
+            echo
+            echo "### ${LABEL}"
+            echo
+            echo "${NOTE}"
+            echo
+        } | tee -a "$OUTFILE"
+        cmd=("$BENCH" $BENCH_FLAGS -sm "$SPLIT_MODE" "${SCOPE_FLAGS[@]}" --n-cpu-moe "$NO_FIT_N_CPU_MOE" $FIT_FLAGS "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
+        echo "$ ${cmd[*]}"
+        echo
+        "${cmd[@]}" | tee -a "$OUTFILE"
+        echo | tee -a "$OUTFILE"
+    done
 
     echo "--- $BACKEND $SCOPE $MODE done ---"
     echo
