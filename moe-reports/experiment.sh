@@ -18,10 +18,10 @@
 #   backends = rocm,vulkan
 #   pp       = 512,2048
 #   tg       = 256
-#   ubatch   = 512,2048,4096
+#   ubatch   = 512,1024,2048
 #
 # Env overrides:
-#   BENCH_FLAGS      default: -ngl 999 -fa on -r 3 -b 4096
+#   BENCH_FLAGS      default: -ngl 999 -fa on -r 3 -b 2048
 #   FIT_TARGET_MIB   default: 512
 #   REPORTS_DIR      default: moe-reports (base dir; model subdir is added automatically)
 #   OUTFILE
@@ -40,7 +40,7 @@ MODEL="${3:-models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf}"
 BACKENDS="${4:-rocm,vulkan}"
 PP_CSV="${5:-512,2048}"
 TG_CSV="${6:-256}"
-UB_CSV="${7:-512,2048,4096}"
+UB_CSV="${7:-512,1024,2048}"
 
 if [[ "$MODEL" != /* ]]; then
     if [[ -f "$INVOKE_DIR/$MODEL" ]]; then
@@ -74,6 +74,7 @@ case "$MODE" in
     fit-moe)
         MODE_DESC="full VRAM with --n-cpu-moe sweep"
         N_CPU_MOE_LIST=(0 4 8 16 32 64)
+        N_CPU_MOE_CSV="$(IFS=,; echo "${N_CPU_MOE_LIST[*]}")"
         ;;
     no-fit-moe)
         MODE_DESC="auto-fit MoE with --fit-target"
@@ -89,7 +90,7 @@ IFS=',' read -ra PP_LIST <<< "$PP_CSV"
 IFS=',' read -ra TG_LIST <<< "$TG_CSV"
 IFS=',' read -ra UB_LIST <<< "$UB_CSV"
 
-BENCH_FLAGS="${BENCH_FLAGS:--ngl 999 -fa on -r 3 -b 4096}"
+BENCH_FLAGS="${BENCH_FLAGS:--ngl 999 -fa on -r 3 -b 2048}"
 MODEL_FILE="$(basename "$MODEL" .gguf)"
 MODEL_STEM="$(echo "$MODEL_FILE" | sed -E 's/-[0-9]{5}-of-[0-9]{5}$//')"
 MODEL_NAME="$MODEL_STEM"
@@ -223,14 +224,12 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
     fi
 
     if [[ "$MODE" == "fit-moe" ]]; then
-        for n_cpu_moe in "${N_CPU_MOE_LIST[@]}"; do
-            { echo; echo "### n_cpu_moe=$n_cpu_moe"; echo; } | tee -a "$OUTFILE"
-            cmd=("$BENCH" $BENCH_FLAGS -sm "$SPLIT_MODE" "${SCOPE_FLAGS[@]}" --n-cpu-moe "$n_cpu_moe" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
-            echo "$ ${cmd[*]}"
-            echo
-            "${cmd[@]}" | tee -a "$OUTFILE"
-            echo | tee -a "$OUTFILE"
-        done
+        { echo; echo "### n_cpu_moe=$N_CPU_MOE_CSV"; echo; } | tee -a "$OUTFILE"
+        cmd=("$BENCH" $BENCH_FLAGS -sm "$SPLIT_MODE" "${SCOPE_FLAGS[@]}" --n-cpu-moe "$N_CPU_MOE_CSV" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
+        echo "$ ${cmd[*]}"
+        echo
+        "${cmd[@]}" | tee -a "$OUTFILE"
+        echo | tee -a "$OUTFILE"
         echo "--- $BACKEND $SCOPE $MODE done ---"
         echo
         continue
