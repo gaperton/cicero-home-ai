@@ -1,13 +1,16 @@
 # MoE Models Fitting a Single GPU
 
-This report summarizes single-GPU MoE baselines for two models that fit fully on one 31 GiB GPU, then analyzes the performance cost of unloading MoE experts to CPU RAM with `--n-cpu-moe`.
+This report summarizes MoE baselines for two models that fit fully on one 31 GiB GPU, compares single-GPU and two-GPU placement, then analyzes the performance cost of unloading MoE experts to CPU RAM with `--n-cpu-moe`.
 
 Source reports:
 
 - [Gemma 4 26B A4B IT single fit](gemma-4-26B-A4B-it/single-fit-UD-Q5_K_XL-20260419-170543.md)
+- [Gemma 4 26B A4B IT all-GPU fit](gemma-4-26B-A4B-it/all-fit-UD-Q5_K_XL-20260419-172602.md)
 - [Gemma 4 26B A4B IT expert offload sweep](gemma-4-26B-A4B-it/single-fit-moe-UD-Q5_K_XL-20260419-164051.md)
+- [Gemma 4 26B A4B IT all-GPU expert offload sweep](gemma-4-26B-A4B-it/all-fit-moe-UD-Q5_K_XL-20260419-173909.md)
 - [Qwen3.6-35B A3B single fit](Qwen3.6-35B-A3B/single-fit-UD-Q5_K_XL-20260419-180924.md)
 - [Qwen3.6-35B A3B expert offload sweep](Qwen3.6-35B-A3B/single-fit-moe-UD-Q5_K_XL-20260419-181155.md)
+- [Qwen3.6-35B A3B all-GPU expert offload sweep](Qwen3.6-35B-A3B/all-fit-moe-UD-Q5_K_XL-20260419-190920.md)
 
 ## What Are MoE Models
 
@@ -60,6 +63,27 @@ Main baseline observations:
 - Vulkan is about `80%` faster than ROCm for Qwen decode.
 - Qwen has much higher ROCm prompt throughput than Gemma at `pp2048`, despite similar ROCm decode.
 
+## Two GPU Baseline
+
+Both MoE models already fit on one GPU, so the two-GPU baseline is a scaling test rather than a requirement. At ubatch `2048`, two-GPU placement does not improve decode. ROCm decode drops moderately, while Vulkan decode drops by about `20%` on both models.
+
+Baseline comparison at ubatch `2048`:
+
+| Model | Backend | 1 GPU `pp2048` | 2 GPU `pp2048` | Prefill change | 1 GPU `tg256` | 2 GPU `tg256` | Decode change |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Gemma 4 26B A4B IT | ROCm | `1908.18` | `1992.61` | `+4%` | `71.91` | `64.08` | `-11%` |
+| Gemma 4 26B A4B IT | Vulkan | `3262.37` | `3145.34` | `-4%` | `112.01` | `90.46` | `-19%` |
+| Qwen3.6-35B A3B | ROCm | `2835.32` | `2846.87` | `+0.4%` | `71.91` | `66.01` | `-8%` |
+| Qwen3.6-35B A3B | Vulkan | `3471.48` | `3236.94` | `-7%` | `129.34` | `103.46` | `-20%` |
+
+Main two-GPU baseline observations:
+
+- Two-GPU placement hurts decode for both models and both backends.
+- ROCm loses less decode than Vulkan, but ROCm also gains little to no prompt throughput.
+- Vulkan still has higher two-GPU decode than ROCm, but the gap shrinks substantially.
+- The best interactive baseline remains single-GPU Vulkan with all experts resident on GPU.
+- Two-GPU Vulkan may still be interesting for specific prefill-heavy settings: at ubatch `512`, Gemma reaches `3956.51 t/s` on `pp2048`, and Qwen reaches `3910.78 t/s`, but both lose about `20%` decode versus single-GPU Vulkan.
+
 ## Expert Unloading Results
 
 The tables below use ubatch `2048` and compare every `n_cpu_moe` setting against `n_cpu_moe=0` for the same model and backend. Negative percentages are throughput loss.
@@ -105,6 +129,7 @@ Qwen handles small ROCm offloads better than Gemma on decode: `n_cpu_moe=4` cost
 ## Cross-Model Findings
 
 - If the model fits, keep all experts on GPU.
+- If the model fits on one GPU, adding a second GPU does not improve interactive decode in these results.
 - Expert unloading hurts decode immediately, even at `n_cpu_moe=4`.
 - Vulkan has the fastest no-offload decode, but it is also more sensitive to expert unloading.
 - ROCm has lower no-offload decode, but it degrades more gently for Qwen at small offload counts.
