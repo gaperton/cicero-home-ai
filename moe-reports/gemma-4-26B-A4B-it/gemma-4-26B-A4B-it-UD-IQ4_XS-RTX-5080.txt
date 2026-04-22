@@ -1,0 +1,62 @@
+PS F:\test> c:\temp\llama-bench.exe -ngl 999 -fa on -r 3 -b 2048 -sm none -mg 0 --n-cpu-moe 64,32,16,8,4,0 -p 512 -p 2048 -n 256 -ub 512 -ub 1024 -ub 2048 -m f:\gemma-4-26B-A4B-it-UD-IQ4_XS.gguf -o md
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16302 MiB):
+  Device 0: NVIDIA GeForce RTX 5080, compute capability 12.0, VMM: yes, VRAM: 16302 MiB
+load_backend: loaded CUDA backend from C:\temp\ggml-cuda.dll
+load_backend: loaded RPC backend from C:\temp\ggml-rpc.dll
+load_backend: loaded CPU backend from C:\temp\ggml-cpu-alderlake.dll
+| model                          |       size |     params | backend    | ngl |  n_cpu_moe | n_ubatch |     sm |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ---------: | -------: | -----: | --------------: | -------------------: |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         64 |      512 |   none |           pp512 |       675.74 + 13.86 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         64 |      512 |   none |          pp2048 |        721.05 + 9.31 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         64 |      512 |   none |           tg256 |         34.37 + 0.00 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         64 |     1024 |   none |           pp512 |       778.27 + 15.90 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         64 |     1024 |   none |          pp2048 |      1289.67 + 16.55 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         64 |     1024 |   none |           tg256 |         34.49 + 0.24 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         64 |     2048 |   none |           pp512 |       775.30 + 17.93 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         64 |     2048 |   none |          pp2048 |      2091.74 + 42.54 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         64 |     2048 |   none |           tg256 |         34.55 + 0.01 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         32 |      512 |   none |           pp512 |       672.33 + 48.44 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         32 |      512 |   none |          pp2048 |       776.14 + 11.97 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         32 |      512 |   none |           tg256 |         34.46 + 0.06 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         32 |     1024 |   none |           pp512 |        772.01 + 4.48 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         32 |     1024 |   none |          pp2048 |       1325.12 + 7.32 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         32 |     1024 |   none |           tg256 |         34.47 + 0.07 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         32 |     2048 |   none |           pp512 |       767.63 + 20.72 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         32 |     2048 |   none |          pp2048 |      2096.23 + 26.69 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         32 |     2048 |   none |           tg256 |         34.35 + 0.06 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         16 |      512 |   none |           pp512 |      1185.14 + 76.62 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         16 |      512 |   none |          pp2048 |      1270.36 + 27.91 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         16 |      512 |   none |           tg256 |         54.47 + 0.24 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         16 |     1024 |   none |           pp512 |      1299.45 + 32.06 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         16 |     1024 |   none |          pp2048 |     1755.36 + 455.33 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         16 |     1024 |   none |           tg256 |         53.79 + 0.49 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         16 |     2048 |   none |           pp512 |      1245.02 + 21.64 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         16 |     2048 |   none |          pp2048 |      2912.20 + 42.24 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |         16 |     2048 |   none |           tg256 |         54.09 + 0.13 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          8 |      512 |   none |           pp512 |      1876.03 + 89.54 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          8 |      512 |   none |          pp2048 |       1956.57 + 6.87 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          8 |      512 |   none |           tg256 |         80.85 + 0.12 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          8 |     1024 |   none |           pp512 |      1988.48 + 40.87 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          8 |     1024 |   none |          pp2048 |       2958.33 + 3.84 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          8 |     1024 |   none |           tg256 |         80.63 + 0.29 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          8 |     2048 |   none |           pp512 |      2009.77 + 14.00 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          8 |     2048 |   none |          pp2048 |      3879.16 + 39.06 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          8 |     2048 |   none |           tg256 |         80.72 + 0.14 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          4 |      512 |   none |           pp512 |      2932.24 + 39.00 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          4 |      512 |   none |          pp2048 |      2847.09 + 23.11 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          4 |      512 |   none |           tg256 |        106.96 + 0.24 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          4 |     1024 |   none |           pp512 |      3002.36 + 18.83 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          4 |     1024 |   none |          pp2048 |      3981.06 + 31.65 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          4 |     1024 |   none |           tg256 |        106.92 + 0.14 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          4 |     2048 |   none |           pp512 |      3010.51 + 41.19 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          4 |     2048 |   none |          pp2048 |      4520.99 + 54.86 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          4 |     2048 |   none |           tg256 |        106.28 + 0.34 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          0 |      512 |   none |           pp512 |      5893.66 + 26.56 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          0 |      512 |   none |          pp2048 |      5493.02 + 28.07 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          0 |      512 |   none |           tg256 |        157.49 + 0.48 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          0 |     1024 |   none |           pp512 |      6027.88 + 31.60 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          0 |     1024 |   none |          pp2048 |     5468.31 + 123.43 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          0 |     1024 |   none |           tg256 |        155.40 + 0.55 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          0 |     2048 |   none |           pp512 |     5853.72 + 152.72 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          0 |     2048 |   none |          pp2048 |       972.02 + 30.16 |
+| gemma4 ?B IQ4_XS - 4.25 bpw    |  12.48 GiB |    25.23 B | CUDA       | 999 |          0 |     2048 |   none |           tg256 |        157.48 + 0.32 |
