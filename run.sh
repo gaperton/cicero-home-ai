@@ -45,6 +45,7 @@ if [[ "$BACKEND" == "vulkan" ]]; then
     GGML_VK_VISIBLE_DEVICES=0 "$LLAMA_DIR/llama-server" \
         $SERVER_FLAGS_COMMON \
         ${!SERVER_FLAGS_BACKEND} \
+        --models-preset models-0.ini \
         --port 8080 \
         "${WEBUI_CONFIG_ARGS[@]}" &
     SERVER0_PID=$!
@@ -55,6 +56,7 @@ if [[ "$BACKEND" == "vulkan" ]]; then
     GGML_VK_VISIBLE_DEVICES=1 "$LLAMA_DIR/llama-server" \
         $SERVER_FLAGS_COMMON \
         ${!SERVER_FLAGS_BACKEND} \
+        --models-preset models-1.ini \
         --port 8081 \
         "${WEBUI_CONFIG_ARGS[@]}"
 else
@@ -62,6 +64,7 @@ else
     "$LLAMA_DIR/llama-server" \
         $SERVER_FLAGS_COMMON \
         ${!SERVER_FLAGS_BACKEND} \
+        --models-preset models.ini \
         --port 8080 \
         "${WEBUI_CONFIG_ARGS[@]}"
 fi

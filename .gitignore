@@ -4,3 +4,4 @@ llama.cpp
 .claude
 reports
 mcp-config.json
+*.log

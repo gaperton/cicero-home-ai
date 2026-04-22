@@ -13,6 +13,8 @@ source .env
 TARGETS="llama-cli llama-mtmd-cli llama-server llama-gguf-split llama-bench"
 BACKEND="${1:-both}"
 
+"$SCRIPT_DIR/stop.sh" || true
+
 build() {
     local dir="$1" flags="$2"
     git -C "$dir" pull
@@ -25,11 +27,13 @@ build() {
 [[ "$BACKEND" == "rocm"   || "$BACKEND" == "both" ]] && build llama-rocm   "$CMAKE_ROCM_FLAGS"
 
 # Download/update models from HuggingFace (skips unchanged files)
-hf download unsloth/Qwen3.5-27B-GGUF \
-    Qwen3.5-27B-UD-Q5_K_XL.gguf --local-dir models/
+hf download unsloth/Qwen3.6-27B-GGUF \
+    Qwen3.6-27B-UD-Q5_K_XL.gguf --local-dir models/
 
 hf download unsloth/Qwen3.6-35B-A3B-GGUF \
     Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf --local-dir models/
 
 hf download unsloth/gemma-4-31B-it-GGUF \
     gemma-4-31B-it-UD-Q5_K_XL.gguf --local-dir models/
+
+"$SCRIPT_DIR/start.sh" || true

@@ -1,0 +1,19 @@
+[Unit]
+Description=Cicero Home AI llama-server stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gaperton/data/cicero-home-ai
+Environment=PATH=/home/gaperton/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/gaperton/data/cicero-home-ai/run.sh
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+KillMode=control-group
+StandardOutput=append:/home/gaperton/data/cicero-home-ai/logs/autostart.log
+StandardError=append:/home/gaperton/data/cicero-home-ai/logs/autostart.log
+
+[Install]
+WantedBy=default.target
