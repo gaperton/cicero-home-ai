@@ -4,8 +4,8 @@
 # Usage:
 #   ./bench-moe.sh [sm] [model] [mode] [backends] [pp] [tg] [ubatch]
 #
-#   sm         single | layer | all   (default: all)
-#              single = sm=none; layer = sm=layer; all = both
+#   sm         single | layer | row | all   (default: all)
+#              single = sm=none; layer = sm=layer; row = sm=row; all = none+layer+row
 #   model      path to .gguf          (default: models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf)
 #   mode       full | fitt            (default: full)
 #              full = sweep n_cpu_moe 0,4,8,16,32,999
@@ -38,8 +38,9 @@ UB_CSV="${7:-512,1024,2048}"
 case "$SM_ARG" in
     single) SPLIT_LIST=(none) ;;
     layer)  SPLIT_LIST=(layer) ;;
-    all)    SPLIT_LIST=(none layer) ;;
-    *) echo "Error: sm must be single, layer, or all (got '$SM_ARG')" >&2; exit 1 ;;
+    row)    SPLIT_LIST=(row) ;;
+    all)    SPLIT_LIST=(none layer row) ;;
+    *) echo "Error: sm must be single, layer, row, or all (got '$SM_ARG')" >&2; exit 1 ;;
 esac
 
 case "$MODE" in
