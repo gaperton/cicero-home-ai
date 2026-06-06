@@ -7,9 +7,10 @@
 #   sm         single | layer | row | all   (default: all)
 #              single = sm=none; layer = sm=layer; row = sm=row; all = none+layer+row
 #   model      path to .gguf          (default: models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf)
-#   mode       full | fitt            (default: full)
-#              full = sweep n_cpu_moe 0,4,8,16,32,999
-#              fitt = n_cpu_moe=999 only, run without and with --fitt 512
+#   mode       full | fitt | dense   (default: full)
+#              full  = sweep n_cpu_moe 0,4,8,16,32,999
+#              fitt  = n_cpu_moe=999 only, run without and with --fitt 512
+#              dense = no --n-cpu-moe flags (for non-MoE models)
 #   backends   csv                    (default: rocm,vulkan)
 #   pp         prompt counts, csv     (default: 512,2048)
 #   tg         gen counts, csv        (default: 256)
@@ -44,9 +45,10 @@ case "$SM_ARG" in
 esac
 
 case "$MODE" in
-    full) N_CPU_MOE_LIST=(0 4 8 16 32 999) ;;
-    fitt) N_CPU_MOE_LIST=(999) ;;
-    *) echo "Error: mode must be full or fitt (got '$MODE')" >&2; exit 1 ;;
+    full)  N_CPU_MOE_LIST=(0 4 8 16 32 999) ;;
+    fitt)  N_CPU_MOE_LIST=(999) ;;
+    dense) N_CPU_MOE_LIST=() ;;
+    *) echo "Error: mode must be full, fitt, or dense (got '$MODE')" >&2; exit 1 ;;
 esac
 
 IFS=',' read -ra BACKEND_LIST <<< "$BACKENDS"
@@ -149,6 +151,12 @@ for BACKEND in "${BACKEND_LIST[@]}"; do
                 "${cmd[@]}" | tee -a "$OUTFILE"
                 echo | tee -a "$OUTFILE"
             done
+        elif [[ "$MODE" == "dense" ]]; then
+            cmd=("$BENCH" $BENCH_FLAGS -sm "$SM_VAL" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
+            echo "$ ${cmd[*]}"
+            echo
+            "${cmd[@]}" | tee -a "$OUTFILE"
+            echo | tee -a "$OUTFILE"
         else
             cmd=("$BENCH" $BENCH_FLAGS -sm "$SM_VAL" "${moe_flags[@]}" "${pp_flags[@]}" "${tg_flags[@]}" "${ub_flags[@]}" -m "$MODEL" -o md)
             echo "$ ${cmd[*]}"
