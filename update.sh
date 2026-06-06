@@ -30,7 +30,7 @@ build() {
 hf download unsloth/Qwen3.6-27B-MTP-GGUF \
     Qwen3.6-27B-UD-Q5_K_XL.gguf --local-dir models/
 
-hf download unsloth/Qwen3.6-35B-A3B-GGUF \
+hf download unsloth/Qwen3.6-35B-A3B-MTP-GGUF \
     Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf --local-dir models/
 
 hf download unsloth/gemma-4-31B-it-qat-GGUF \
