@@ -27,13 +27,13 @@ build() {
 [[ "$BACKEND" == "rocm"   || "$BACKEND" == "both" ]] && build llama-rocm   "$CMAKE_ROCM_FLAGS"
 
 # Download/update models from HuggingFace (skips unchanged files)
-hf download unsloth/Qwen3.6-27B-GGUF \
+hf download unsloth/Qwen3.6-27B-MTP-GGUF \
     Qwen3.6-27B-UD-Q5_K_XL.gguf --local-dir models/
 
 hf download unsloth/Qwen3.6-35B-A3B-GGUF \
     Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf --local-dir models/
 
-hf download unsloth/gemma-4-31B-it-GGUF \
-    gemma-4-31B-it-UD-Q5_K_XL.gguf --local-dir models/
+hf download unsloth/gemma-4-31B-it-qat-GGUF \
+    gemma-4-31B-it-qat-UD-Q4_K_XL.gguf --local-dir models/
 
 "$SCRIPT_DIR/start.sh" || true

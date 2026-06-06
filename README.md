@@ -159,9 +159,9 @@ Sized to use the full 32 GB VRAM of the AMD R9700 in TTY mode. If running from a
 
 | Preset | Model |
 |---|---|
-| `qwen3.6-27b@q5-200k` | Qwen3.6 27B UD-Q5_K_XL |
+| `qwen3.6-27b-mtp@q5-200k` | Qwen3.6 27B MTP UD-Q5_K_XL |
 | `qwen3.6-35b-a3b@q5-262k` | Qwen3.6 35B-A3B UD-Q5_K_XL |
-| `gemma4-31b@q5-128k` | Gemma 4 31B UD-Q5_K_XL |
+| `gemma4-31b-qat@q4-128k` | Gemma 4 31B QAT UD-Q4_K_XL |
 
 Context is auto-fit to available VRAM (`fit-target = 256` in `models.ini`).
 
