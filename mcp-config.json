@@ -4,7 +4,7 @@
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-brave-search"],
       "env": {
-        "BRAVE_API_KEY": "your key here"
+        "BRAVE_API_KEY": "BSAgy-QtX1qIRZCFT_tdmy-fM3D3I3Y"
       }
     },
     "fetch": {

@@ -36,4 +36,10 @@ hf download unsloth/Qwen3.6-35B-A3B-MTP-GGUF \
 hf download unsloth/gemma-4-31B-it-qat-GGUF \
     gemma-4-31B-it-qat-UD-Q4_K_XL.gguf --local-dir models/
 
+hf download unsloth/gemma-4-31B-it-GGUF \
+    gemma-4-31B-it-UD-Q6_K_XL.gguf --local-dir models/
+
+hf download unsloth/gemma-4-31B-it-GGUF \
+    gemma-4-31B-it-Q8_0.gguf --local-dir models/
+
 "$SCRIPT_DIR/start.sh" || true
