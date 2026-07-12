@@ -6,11 +6,13 @@ Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/ll
 
 `llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the model name in the request; when a model isn't loaded, the router starts a child process for it and proxies the request. With `--models-max 1`, only one model is in VRAM at a time (LRU eviction).
 
-On **Vulkan (dual-GPU)**, two `llama-server` instances run in parallel:
-- **GPU 0 → port 8080**, preset from `models-0.ini`
-- **GPU 1 → port 8081**, preset from `models-1.ini`
+Each GPU backend is fully self-contained in its own top-level folder — `rocm/` and `vulkan/` — owning its `llama.cpp` checkout+build, model preset(s), `run.sh`, `build.sh`, and `.env`.
 
-On **ROCm (single-GPU)**, one instance runs on port 8080, preset from `models.ini`.
+On **Vulkan**, two `llama-server` instances run in parallel, one per GPU:
+- **GPU 0 → port 8080**, preset from `vulkan/models-0.ini`
+- **GPU 1 → port 8081**, preset from `vulkan/models-1.ini`
+
+On **ROCm**, one instance runs on port 8080, split across both GPUs (`split-mode=layer`), preset from `rocm/models.ini`.
 
 **Open WebUI** runs on port 3000 and is pre-configured to use both llama-server endpoints as OpenAI-compatible backends.
 
@@ -137,17 +139,20 @@ To switch the backend, edit `ExecStart=` in `~/.config/systemd/user/cicero-home-
 
 ## Configuration
 
-**`.env`** — GPU backend build flags and server flags:
+**`.env`** — flags shared by every `llama-server` instance regardless of backend:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CMAKE_VULKAN_FLAGS` | `-DGGML_VULKAN=ON` | CMake flags for the Vulkan llama.cpp build. |
-| `CMAKE_ROCM_FLAGS` | `-DGGML_HIP=ON ...` | CMake flags for the ROCm build. Adjust `AMDGPU_TARGETS` for your GPU. |
 | `SERVER_FLAGS_COMMON` | `--host 0.0.0.0 --models-max 1 --webui-mcp-proxy` | Flags passed to every `llama-server` instance. |
-| `SERVER_FLAGS_VULKAN` | _(empty)_ | Extra flags for the Vulkan backend. |
-| `SERVER_FLAGS_ROCM` | _(empty)_ | Extra flags for the ROCm backend. |
 
-**`models.ini`** (ROCm) / **`models-0.ini` + `models-1.ini`** (Vulkan) — per-model sampling params and global server flags (`[*]` section).
+**`rocm/.env`** / **`vulkan/.env`** — backend-specific build flags and server flags:
+
+| Variable | Default | Description |
+|---|---|---|
+| `CMAKE_FLAGS` | `-DGGML_VULKAN=ON` (vulkan) / `-DGGML_HIP=ON ...` (rocm) | CMake flags for that backend's llama.cpp build. Adjust `AMDGPU_TARGETS` in `rocm/.env` for your GPU. |
+| `SERVER_FLAGS_EXTRA` | _(empty)_ | Extra flags for that backend's `llama-server` instance(s). |
+
+**`rocm/models.ini`** / **`vulkan/models-0.ini` + `vulkan/models-1.ini`** — per-model sampling params and global server flags (`[*]` section).
 
 **`mcp-config.json`** — MCP server definitions (gitignored, contains API keys).
 
@@ -155,7 +160,7 @@ To switch the backend, edit `ExecStart=` in `~/.config/systemd/user/cicero-home-
 
 ## Models
 
-Sized to use the full 32 GB VRAM of the AMD R9700 in TTY mode. If running from a desktop session, reduce `fit-target` in `models.ini` to account for the ~2–4 GB consumed by the desktop.
+Sized to use the full 32 GB VRAM of the AMD R9700 in TTY mode. If running from a desktop session, reduce `fit-target` in the backend's `models*.ini` to account for the ~2–4 GB consumed by the desktop.
 
 | Preset | Model |
 |---|---|
@@ -173,7 +178,7 @@ Context is auto-fit to available VRAM (`fit-target = 256` in `models.ini`).
 hf download <hf-repo> <filename>.gguf --local-dir models/
 ```
 
-**2.** Add a preset section in `models.ini`:
+**2.** Add a preset section in the relevant backend's `models*.ini` (`rocm/models.ini`, `vulkan/models-0.ini`, or `vulkan/models-1.ini`):
 
 ```ini
 [my-model@q5]
@@ -187,23 +192,31 @@ repeat-penalty = 1.0
 - Global settings from `[*]` (GPU layers, flash attention, etc.) are inherited automatically.
 - Add sampling params per model, or omit them for agent-facing models (agents send their own).
 - Always set `repeat-penalty = 1.0` to explicitly disable it.
-- To remove a model, delete its section from `models.ini` and its `hf download` line from `update.sh`.
+- To remove a model, delete its section from the preset file and its `hf download` line from `update.sh`.
 
 ## Layout
 
 ```
-.env                        # GPU backend build flags and server flags
-models.ini                  # router preset for ROCm (models, sampling params, server flags)
-models-0.ini                # router preset for Vulkan GPU 0 (port 8080)
-models-1.ini                # router preset for Vulkan GPU 1 (port 8081)
-mcp-config.json             # MCP server definitions (gitignored — contains API keys)
-webui-config.json           # Open WebUI pre-configuration (MCP server URLs)
+.env                         # shared server flags (SERVER_FLAGS_COMMON)
+mcp-config.json              # MCP server definitions (gitignored — contains API keys)
+webui-config.json            # Open WebUI pre-configuration (MCP server URLs)
 models/
-  *.gguf                    # model files (downloaded from HuggingFace)
+  *.gguf                     # model files (downloaded from HuggingFace)
 reports/
-  bench-*.md                # llama-bench output (generated by bench.sh)
+  bench-*.md                 # llama-bench output (generated by bench.sh)
 systemd/
-  cicero-home-ai.service    # user service template (installed to ~/.config/systemd/user/ by install.sh)
-llama-vulkan/               # llama.cpp source + Vulkan build (cloned by install.sh)
-llama-rocm/                 # llama.cpp source + ROCm build (cloned by install.sh)
+  cicero-home-ai.service     # user service template (installed to ~/.config/systemd/user/ by install.sh)
+rocm/
+  .env                        # ROCm cmake flags + SERVER_FLAGS_EXTRA
+  build.sh                    # git pull + rebuild
+  run.sh                      # launch llama-server (split-mode=layer, both GPUs, port 8080)
+  models.ini                  # router preset
+  llama.cpp/                  # llama.cpp source + build (cloned by install.sh, gitignored)
+vulkan/
+  .env                        # Vulkan cmake flags + SERVER_FLAGS_EXTRA
+  build.sh                    # git pull + rebuild
+  run.sh                      # launch llama-server (one instance per GPU, ports 8080/8081)
+  models-0.ini                # router preset for GPU 0
+  models-1.ini                # router preset for GPU 1
+  llama.cpp/                  # llama.cpp source + build (cloned by install.sh, gitignored)
 ```

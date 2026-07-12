@@ -8,7 +8,7 @@ cd "$SCRIPT_DIR"
 
 BACKEND="${1:-vulkan}"
 
-LLAMA_DIR="$SCRIPT_DIR/llama-$BACKEND"
+LLAMA_DIR="$SCRIPT_DIR/$BACKEND/llama.cpp"
 [[ "$BACKEND" == "vulkan" ]] && export RADV_DEBUG=nocompute
 
 

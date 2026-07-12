@@ -8,15 +8,15 @@
 # Model name is derived from the first argument by stripping the quant suffix (-UD-Q*).
 #
 # Overrides:
-#   ROCM_BENCH   path to ROCm llama-bench   (default: ./llama-rocm/llama-bench)
-#   VULKAN_BENCH path to Vulkan llama-bench  (default: ./llama-vulkan/llama-bench)
+#   ROCM_BENCH   path to ROCm llama-bench   (default: ./rocm/llama.cpp/llama-bench)
+#   VULKAN_BENCH path to Vulkan llama-bench  (default: ./vulkan/llama.cpp/llama-bench)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-ROCM_BENCH="${ROCM_BENCH:-./llama-rocm/llama-bench}"
-VULKAN_BENCH="${VULKAN_BENCH:-./llama-vulkan/llama-bench}"
+ROCM_BENCH="${ROCM_BENCH:-./rocm/llama.cpp/llama-bench}"
+VULKAN_BENCH="${VULKAN_BENCH:-./vulkan/llama.cpp/llama-bench}"
 
 BENCH_FLAGS="-ngl 99 -fa 1 -p 512,2048,4096 -n 256 -r 2"
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# run.sh — Update llama.cpp & models, then start llama-server in router mode.
-#   ./run.sh [vulkan|rocm]   # backend defaults to vulkan
+# run.sh — Start the full stack: MCP proxy + Open WebUI (shared), then llama-server
+# via the backend's own run.sh.
+#   ./run.sh [vulkan|rocm]   # backend defaults to rocm
 #   See run-tmux.sh          # run in tmux with mc
 set -euo pipefail
 
@@ -8,12 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 source .env
 
-BACKEND="${1:-vulkan}"
-LLAMA_DIR="$SCRIPT_DIR/llama-$BACKEND"
-SERVER_FLAGS_BACKEND="SERVER_FLAGS_${BACKEND^^}"
-
-# RADV_DEBUG=nocompute suppresses a spurious AMD Vulkan warning, only needed for Vulkan
-[[ "$BACKEND" == "vulkan" ]] && export RADV_DEBUG=nocompute
+BACKEND="${1:-rocm}"
 
 # Start MCP proxy — wraps stdio MCP servers as streamable HTTP on :8200 (for llama-server webui)
 mcp-proxy --port 8200 --transport streamablehttp --named-server-config "$SCRIPT_DIR/mcp-config.json" &
@@ -34,37 +30,5 @@ OPENWEBUI_PID=$!
 
 trap 'kill $MCP_PID $OPENWEBUI_PID 2>/dev/null' EXIT
 
-WEBUI_CONFIG_ARGS=()
-if [[ -f "$SCRIPT_DIR/webui-config.json" ]]; then
-    WEBUI_CONFIG_ARGS=(--webui-config-file "$SCRIPT_DIR/webui-config.json")
-fi
-
-if [[ "$BACKEND" == "vulkan" ]]; then
-    # GPU 0 — port 8080 (background)
-    # shellcheck disable=SC2086
-    GGML_VK_VISIBLE_DEVICES=0 "$LLAMA_DIR/llama-server" \
-        $SERVER_FLAGS_COMMON \
-        ${!SERVER_FLAGS_BACKEND} \
-        --models-preset models-0.ini \
-        --port 8080 \
-        "${WEBUI_CONFIG_ARGS[@]}" &
-    SERVER0_PID=$!
-    trap 'kill $MCP_PID $OPENWEBUI_PID $SERVER0_PID 2>/dev/null' EXIT
-
-    # GPU 1 — port 8081 (foreground)
-    # shellcheck disable=SC2086
-    GGML_VK_VISIBLE_DEVICES=1 "$LLAMA_DIR/llama-server" \
-        $SERVER_FLAGS_COMMON \
-        ${!SERVER_FLAGS_BACKEND} \
-        --models-preset models-1.ini \
-        --port 8081 \
-        "${WEBUI_CONFIG_ARGS[@]}"
-else
-    # shellcheck disable=SC2086
-    "$LLAMA_DIR/llama-server" \
-        $SERVER_FLAGS_COMMON \
-        ${!SERVER_FLAGS_BACKEND} \
-        --models-preset models.ini \
-        --port 8080 \
-        "${WEBUI_CONFIG_ARGS[@]}"
-fi
+# Hand off to the backend's own run.sh for the llama-server instance(s)
+"$SCRIPT_DIR/$BACKEND/run.sh"

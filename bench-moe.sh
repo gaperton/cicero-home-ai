@@ -102,7 +102,7 @@ echo
 } | tee "$OUTFILE"
 
 for BACKEND in "${BACKEND_LIST[@]}"; do
-    LLAMA_DIR="$SCRIPT_DIR/llama-$BACKEND"
+    LLAMA_DIR="$SCRIPT_DIR/$BACKEND/llama.cpp"
     BENCH="$LLAMA_DIR/llama-bench"
 
     if [[ ! -x "$BENCH" ]]; then
