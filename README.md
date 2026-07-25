@@ -14,33 +14,32 @@ On **Vulkan**, two `llama-server` instances run in parallel, one per GPU:
 
 On **ROCm**, one instance runs on port 8080, split across both GPUs (`split-mode=layer`), preset from `rocm/models.ini`.
 
-**Open WebUI** runs on port 3000 and is pre-configured to use both llama-server endpoints as OpenAI-compatible backends.
-
-**mcp-proxy** wraps stdio MCP servers (Brave Search, web fetch) as streamable HTTP endpoints on port 8200, which the Open WebUI connects to via the llama-server CORS proxy.
+**Open WebUI** runs on port 3000. It uses the single ROCm endpoint by default, or both llama-server endpoints when the Vulkan backend is selected.
 
 | Script | What it does |
 |---|---|
 | `install.sh` | Install deps, clone llama.cpp checkouts, install Python tools, install and enable the systemd user service. Run once with `sudo`. |
-| `update.sh` | Stop the service, pull latest llama.cpp, rebuild, download updated models, restart the service. |
+| `update.sh` | Stop the service, rebuild one or both backends, update models, and restart the service. |
 | `start.sh` | Start the service via `systemctl --user`. |
 | `stop.sh` | Stop the service via `systemctl --user`. |
-| `run.sh` | Start the full stack (llama-server + mcp-proxy + Open WebUI) in the foreground. Called by the systemd service. |
-| `run-tmux.sh` | Run `run.sh` in a tmux session with `mc` in the right pane, then attach. For interactive monitoring. |
-| `bench.sh` | Run `llama-bench` across all models and save a Markdown report to `reports/`. |
+| `run.sh` | Start the full stack (llama-server + Open WebUI) in the foreground. Called by the systemd service. |
+| `benchmark/bench.sh` | Run `llama-bench` and save a Markdown report under `benchmark/reports/`. |
 
 ## Usage
 
 ```bash
 ./start.sh          # start the service
 ./stop.sh           # stop the service
-./update.sh         # stop, rebuild, download models, restart
-./run-tmux.sh       # start and attach interactively (tmux session with mc)
-./run-tmux.sh kill  # kill the interactive tmux session
+./update.sh         # rebuild both backends, update models, restart
+./update.sh rocm    # rebuild ROCm only, update models, restart
+./update.sh vulkan  # rebuild Vulkan only, update models, restart
+./run.sh            # foreground stack using ROCm (default)
+./run.sh vulkan     # foreground stack using Vulkan
 ```
 
 ## Installation
 
-Configured for AMD, using Vulkan with the default drivers from Linux HWE kernels. No proprietary drivers needed.
+Configured for AMD GPUs with both ROCm and Vulkan builds. ROCm is the default runtime backend and requires a working ROCm/HIP SDK with `hipconfig` on `PATH`. Vulkan remains available as an alternative and uses the standard Vulkan drivers from Linux HWE kernels.
 
 1. Install Linux Mint Cinnamon (or Ubuntu; Mint/Ubuntu assumed below)
 2. Clone this repo and `cd` into it
@@ -53,44 +52,12 @@ Configured for AMD, using Vulkan with the default drivers from Linux HWE kernels
    source ~/.bashrc
    hf auth login
    ```
-5. Copy `mcp-config.example.json` and fill in your Brave Search API key (free tier at brave.com/search/api):
-   ```bash
-   cp mcp-config.example.json mcp-config.json
-   ```
-6. Build llama.cpp, download all models (~70 GB), and start the service:
+5. Build llama.cpp, download all models listed in `models/list.txt`, and start the service:
    ```bash
    ./update.sh
    ```
 
-To adjust the GPU backend or server flags before building, edit `.env` (see [Configuration](#configuration)).
-
-## MCP tools
-
-MCP servers are configured in `mcp-config.json` (gitignored — contains API keys). `mcp-proxy` wraps them as streamable HTTP endpoints used by Open WebUI.
-
-| Server | Package | Description |
-|---|---|---|
-| `brave-search` | `@modelcontextprotocol/server-brave-search` | Web search via Brave Search API |
-| `fetch` | `mcp-server-fetch` (via `uvx`) | Free web page fetching |
-
-A free Brave Search API key (2000 queries/month): [brave.com/search/api](https://brave.com/search/api) — sign up, create an app, copy the key into `mcp-config.json`.
-
-**mcp-config.json format:**
-```json
-{
-  "mcpServers": {
-    "brave-search": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
-      "env": { "BRAVE_API_KEY": "your-key-here" }
-    },
-    "fetch": {
-      "command": "uvx",
-      "args": ["mcp-server-fetch"]
-    }
-  }
-}
-```
+The systemd service runs `./run.sh` without an argument, which selects ROCm. To use Vulkan instead, pass `vulkan` to `run.sh` in the service definition. Build and server flags live in the backend-specific `.env` files; see [Configuration](#configuration).
 
 ## Booting into TTY and auto-starting the server
 
@@ -135,7 +102,7 @@ journalctl --user -u cicero-home-ai.service -f
 tail -f logs/autostart.log
 ```
 
-To switch the backend, edit `ExecStart=` in `~/.config/systemd/user/cicero-home-ai.service` (e.g. `run.sh rocm`), then `systemctl --user daemon-reload`.
+To switch the service to Vulkan, edit `ExecStart=` in `~/.config/systemd/user/cicero-home-ai.service` to end in `run.sh vulkan`, then run `systemctl --user daemon-reload` and restart the service. Remove the argument, or use `run.sh rocm`, to select ROCm.
 
 ## Configuration
 
@@ -143,7 +110,7 @@ To switch the backend, edit `ExecStart=` in `~/.config/systemd/user/cicero-home-
 
 | Variable | Default | Description |
 |---|---|---|
-| `SERVER_FLAGS_COMMON` | `--host 0.0.0.0 --models-max 1 --webui-mcp-proxy` | Flags passed to every `llama-server` instance. |
+| `SERVER_FLAGS_COMMON` | `--host 0.0.0.0 --models-max 1` | Flags passed to every `llama-server` instance. |
 
 **`rocm/.env`** / **`vulkan/.env`** — backend-specific build flags and server flags:
 
@@ -154,35 +121,35 @@ To switch the backend, edit `ExecStart=` in `~/.config/systemd/user/cicero-home-
 
 **`rocm/models.ini`** / **`vulkan/models-0.ini` + `vulkan/models-1.ini`** — per-model sampling params and global server flags (`[*]` section).
 
-**`mcp-config.json`** — MCP server definitions (gitignored, contains API keys).
-
-**`webui-config.json`** — pre-configures MCP server URLs in Open WebUI.
-
 ## Models
 
 Sized to use the full 32 GB VRAM of the AMD R9700 in TTY mode. If running from a desktop session, reduce `fit-target` in the backend's `models*.ini` to account for the ~2–4 GB consumed by the desktop.
 
-| Preset | Model |
-|---|---|
-| `qwen3.6-27b-mtp@q5-200k` | Qwen3.6 27B MTP UD-Q5_K_XL |
-| `qwen3.6-35b-a3b@q5-262k` | Qwen3.6 35B-A3B UD-Q5_K_XL |
-| `gemma4-31b-qat@q4-128k` | Gemma 4 31B QAT UD-Q4_K_XL |
+| Backend | Preset | Model |
+|---|---|---|
+| ROCm | `qwen3.6-27b` | Qwen3.6 27B Q8_0 with built-in MTP |
+| ROCm | `gemma4-31b` | Gemma 4 31B Q8_0 with an MTP draft model |
+| Vulkan GPU 0/1 | `qwen3.6-27b-mtp@alpha` / `@beta` | Qwen3.6 27B UD-Q5_K_XL with built-in MTP |
+| Vulkan GPU 0/1 | `gemma4-31b-qat@alpha` / `@beta` | Gemma 4 31B QAT UD-Q4_K_XL with an MTP draft model |
+| Vulkan GPU 1 | `qwen3.6-35b-a3b@beta` | Qwen3.6 35B-A3B UD-Q5_K_XL |
 
 Context is auto-fit to available VRAM (`fit-target = 256` in `models.ini`).
 
 ### Adding or changing models
 
-**1.** Add a download step in `update.sh`:
+**1.** Add the model to `models/list.txt`, using tab-separated columns:
 
-```bash
-hf download <hf-repo> <filename>.gguf --local-dir models/
+```text
+<local-folder>    <huggingface-repo>    <filename-in-repo>    [local-rename]
 ```
+
+The optional fourth column renames the downloaded file locally. Run `./models/update.sh` to download models without rebuilding, or use the top-level `./update.sh` workflow.
 
 **2.** Add a preset section in the relevant backend's `models*.ini` (`rocm/models.ini`, `vulkan/models-0.ini`, or `vulkan/models-1.ini`):
 
 ```ini
 [my-model@q5]
-model = models/<filename>.gguf
+model = models/<local-folder>/<filename>.gguf
 temp = 1.0
 top-p = 0.95
 repeat-penalty = 1.0
@@ -192,18 +159,23 @@ repeat-penalty = 1.0
 - Global settings from `[*]` (GPU layers, flash attention, etc.) are inherited automatically.
 - Add sampling params per model, or omit them for agent-facing models (agents send their own).
 - Always set `repeat-penalty = 1.0` to explicitly disable it.
-- To remove a model, delete its section from the preset file and its `hf download` line from `update.sh`.
+- To remove a model, delete its preset section and its row from `models/list.txt`.
 
 ## Layout
 
 ```
 .env                         # shared server flags (SERVER_FLAGS_COMMON)
-mcp-config.json              # MCP server definitions (gitignored — contains API keys)
-webui-config.json            # Open WebUI pre-configuration (MCP server URLs)
 models/
-  *.gguf                     # model files (downloaded from HuggingFace)
-reports/
-  bench-*.md                 # llama-bench output (generated by bench.sh)
+  list.txt                   # tab-separated HuggingFace model manifest
+  install.sh                 # install the HuggingFace CLI
+  update.sh                  # download/update every manifest entry
+  <model>/
+    *.gguf                   # downloaded model files
+benchmark/
+  bench.sh                   # dense-model benchmark runner
+  bench-moe.sh               # MoE benchmark runner
+  analysis/                  # benchmark analyses
+  reports/                   # generated benchmark reports
 systemd/
   cicero-home-ai.service     # user service template (installed to ~/.config/systemd/user/ by install.sh)
 rocm/

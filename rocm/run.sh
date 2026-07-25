@@ -10,13 +10,9 @@ cd "$REPO_DIR"
 [[ -f "$REPO_DIR/.env" ]] && source "$REPO_DIR/.env"
 source "$BACKEND_DIR/.env"
 
-WEBUI_CONFIG_ARGS=()
-[[ -f "$REPO_DIR/webui-config.json" ]] && WEBUI_CONFIG_ARGS=(--webui-config-file "$REPO_DIR/webui-config.json")
-
 # shellcheck disable=SC2086
 HIP_VISIBLE_DEVICES=0,1 "$BACKEND_DIR/llama.cpp/llama-server" \
     $SERVER_FLAGS_COMMON \
     $SERVER_FLAGS_EXTRA \
     --models-preset "$BACKEND_DIR/models.ini" \
-    --port 8080 \
-    "${WEBUI_CONFIG_ARGS[@]}"
+    --port 8080

@@ -13,17 +13,13 @@ source "$BACKEND_DIR/.env"
 # RADV_DEBUG=nocompute suppresses a spurious AMD Vulkan warning
 export RADV_DEBUG=nocompute
 
-WEBUI_CONFIG_ARGS=()
-[[ -f "$REPO_DIR/webui-config.json" ]] && WEBUI_CONFIG_ARGS=(--webui-config-file "$REPO_DIR/webui-config.json")
-
 # GPU 0 — port 8080 (background)
 # shellcheck disable=SC2086
 GGML_VK_VISIBLE_DEVICES=0 "$BACKEND_DIR/llama.cpp/llama-server" \
     $SERVER_FLAGS_COMMON \
     $SERVER_FLAGS_EXTRA \
     --models-preset "$BACKEND_DIR/models-0.ini" \
-    --port 8080 \
-    "${WEBUI_CONFIG_ARGS[@]}" &
+    --port 8080 &
 SERVER0_PID=$!
 trap 'kill $SERVER0_PID 2>/dev/null' EXIT
 
@@ -33,5 +29,4 @@ GGML_VK_VISIBLE_DEVICES=1 "$BACKEND_DIR/llama.cpp/llama-server" \
     $SERVER_FLAGS_COMMON \
     $SERVER_FLAGS_EXTRA \
     --models-preset "$BACKEND_DIR/models-1.ini" \
-    --port 8081 \
-    "${WEBUI_CONFIG_ARGS[@]}"
+    --port 8081

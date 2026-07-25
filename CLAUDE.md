@@ -8,7 +8,7 @@ A home AI server setup — not a software project with a build system or tests. 
 
 ## Architecture
 
-Each GPU backend is fully self-contained in its own top-level folder — `rocm/` and `vulkan/`. Each owns its `llama.cpp/` checkout+build, its model preset(s), its own `run.sh` (launches `llama-server`) and `build.sh` (pulls + rebuilds), and its own `.env` (cmake flags + extra server flags). The top-level `run.sh` only handles what's shared across backends: MCP proxy and Open WebUI, then hands off to `rocm/run.sh` or `vulkan/run.sh`.
+Each GPU backend is fully self-contained in its own top-level folder — `rocm/` and `vulkan/`. Each owns its `llama.cpp/` checkout+build, its model preset(s), its own `run.sh` (launches `llama-server`) and `build.sh` (pulls + rebuilds), and its own `.env` (cmake flags + extra server flags). The top-level `run.sh` only handles what's shared across backends: Open WebUI, then hands off to `rocm/run.sh` or `vulkan/run.sh`.
 
 **llama-server** runs in **router mode** — a built-in multi-model proxy on port 8080 (plus 8081 for the Vulkan backend's second GPU instance). Only one model is loaded in VRAM at a time per instance (`--models-max 1`, LRU eviction).
 
@@ -17,12 +17,10 @@ Each GPU backend is fully self-contained in its own top-level folder — `rocm/`
 - `rocm/.env`, `vulkan/.env` — backend-specific cmake flags and `SERVER_FLAGS_EXTRA`
 - `rocm/models.ini` — router preset for ROCm (single instance, split-mode=layer across both GPUs, port 8080)
 - `vulkan/models-0.ini`, `vulkan/models-1.ini` — router presets for Vulkan (one instance per GPU, ports 8080/8081)
-- `mcp-config.json` — MCP server definitions (gitignored, contains API keys); used by `mcp-proxy`
-- `webui-config.json` — pre-configures MCP server URLs in the llama.cpp web UI
 - `rocm/llama.cpp/`, `vulkan/llama.cpp/` — cloned separately (gitignored), built binaries live here alongside source
 
 **Script flow:**
-- `run-tmux.sh` → `run.sh [rocm|vulkan]` → `mcp-proxy` (MCP servers on :8200) + Open WebUI + `<backend>/run.sh` → `llama-server --models-preset <backend's ini>`
+- `run-tmux.sh` → `run.sh [rocm|vulkan]` → Open WebUI + `<backend>/run.sh` → `llama-server --models-preset <backend's ini>`
 - `update.sh [rocm|vulkan]` → stop service → `<backend>/build.sh` (git pull + rebuild) → download models → start service
 
 ## Key conventions

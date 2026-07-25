@@ -5,13 +5,20 @@
 set -euo pipefail
 
 BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LLAMA_DIR="$BACKEND_DIR/llama.cpp"
 
 if [[ $EUID -eq 0 ]]; then
     apt-get update
     apt-get install -y spirv-headers libvulkan-dev glslc
-    sudo -u "$SUDO_USER" git clone https://github.com/ggml-org/llama.cpp "$BACKEND_DIR/llama.cpp"
 else
     sudo apt-get update
     sudo apt-get install -y spirv-headers libvulkan-dev glslc
-    git clone https://github.com/ggml-org/llama.cpp "$BACKEND_DIR/llama.cpp"
+fi
+
+if [[ -d "$LLAMA_DIR/.git" ]]; then
+    echo "llama.cpp checkout already exists at $LLAMA_DIR; skipping clone."
+elif [[ $EUID -eq 0 ]]; then
+    sudo -u "$SUDO_USER" git clone https://github.com/ggml-org/llama.cpp "$LLAMA_DIR"
+else
+    git clone https://github.com/ggml-org/llama.cpp "$LLAMA_DIR"
 fi
