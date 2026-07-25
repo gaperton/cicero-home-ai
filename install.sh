@@ -4,15 +4,21 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LLAMA_DIR="$SCRIPT_DIR/llama.cpp"
 
-# Install system dependencies shared by both backends (tmux, mc, node, etc.)
+# Install system dependencies (tmux, mc, node, etc.) plus llama.cpp's ROCm build deps
 apt-get update
-apt-get install -y ripgrep ffmpeg pciutils pipx tmux mc nodejs npm
+apt-get install -y ripgrep ffmpeg pciutils pipx tmux mc nodejs npm \
+    build-essential cmake ccache curl libcurl4-openssl-dev
 
-# Each backend's own install.sh needs root for apt-get, so call them directly (they
-# drop to $SUDO_USER themselves for the git clone). Model setup is pure user-level.
-"$SCRIPT_DIR/vulkan/install.sh"
-"$SCRIPT_DIR/rocm/install.sh"
+# Clone the llama.cpp checkout. Assumes the ROCm/HIP SDK is already installed
+# (see .env — hipconfig must be on PATH).
+if [[ -d "$LLAMA_DIR/.git" ]]; then
+    echo "llama.cpp checkout already exists at $LLAMA_DIR; skipping clone."
+else
+    sudo -u "$SUDO_USER" git clone https://github.com/ggml-org/llama.cpp "$LLAMA_DIR"
+fi
+
 sudo -u "$SUDO_USER" "$SCRIPT_DIR/models/install.sh"
 
 SUDO_UID=$(id -u "$SUDO_USER")

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# rocm/build.sh — Pull latest llama.cpp and rebuild the ROCm backend.
+# build.sh — Pull latest llama.cpp and rebuild.
 set -euo pipefail
 
-BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$BACKEND_DIR/.env"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/.env"
 
 TARGETS="llama-cli llama-mtmd-cli llama-server llama-gguf-split llama-bench"
-LLAMA_DIR="$BACKEND_DIR/llama.cpp"
+LLAMA_DIR="$SCRIPT_DIR/llama.cpp"
 
 git -C "$LLAMA_DIR" pull
 cmake "$LLAMA_DIR" -B "$LLAMA_DIR/build" -DBUILD_SHARED_LIBS=OFF $CMAKE_FLAGS
