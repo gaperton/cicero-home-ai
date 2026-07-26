@@ -2,3 +2,7 @@
 Qwen3.6-27B	unsloth/Qwen3.6-27B-MTP-GGUF	Qwen3.6-27B-Q8_0.gguf
 Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-Q8_0.gguf
 Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	MTP/mtp-gemma-4-31B-it-Q8_0.gguf
+DeepSeek-V4-Flash	unsloth/DeepSeek-V4-Flash-GGUF	UD-Q3_K_XL/DeepSeek-V4-Flash-UD-Q3_K_XL-00001-of-00004.gguf
+DeepSeek-V4-Flash	unsloth/DeepSeek-V4-Flash-GGUF	UD-Q3_K_XL/DeepSeek-V4-Flash-UD-Q3_K_XL-00002-of-00004.gguf
+DeepSeek-V4-Flash	unsloth/DeepSeek-V4-Flash-GGUF	UD-Q3_K_XL/DeepSeek-V4-Flash-UD-Q3_K_XL-00003-of-00004.gguf
+DeepSeek-V4-Flash	unsloth/DeepSeek-V4-Flash-GGUF	UD-Q3_K_XL/DeepSeek-V4-Flash-UD-Q3_K_XL-00004-of-00004.gguf
