@@ -6,7 +6,7 @@ Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/ll
 
 `llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the model name in the request; when a model isn't loaded, the router starts a child process for it and proxies the request. With `--models-max 1`, only one model is in VRAM at a time per instance (LRU eviction).
 
-Two instances run side by side, one per GPU (Vulkan backend, no layer-split): port 8080 on GPU0, port 8081 on GPU1, both loading presets from the same `models.ini`. Running each GPU independently outperforms splitting a single model across both cards, and lets two different models stay resident at once.
+Two instances run side by side, one per GPU (Vulkan backend, no layer-split): port 8080 on GPU0 loads `models-0.ini`, while port 8081 on GPU1 loads `models-1.ini`. Running each GPU independently outperforms splitting a single model across both cards, and lets two different models stay resident at once.
 
 **Open WebUI** runs on port 3000, pointed at both llama-server endpoints.
 
@@ -103,18 +103,20 @@ tail -f logs/autostart.log
 | `CMAKE_FLAGS` | `-DGGML_VULKAN=ON -DGGML_NATIVE=1 ...` | CMake flags for the llama.cpp build. |
 | `SERVER_FLAGS` | `--host 0.0.0.0 --models-max 1` | Flags passed to each `llama-server` instance. |
 
-**`models.ini`** — per-model sampling params and global server flags (`[*]` section), shared by both instances. Each instance is pinned to its GPU via `--device Vulkan0`/`Vulkan1` on the CLI (see `run.sh`), so presets must fit a single 32GB card — no `split-mode=layer`.
+**`models-0.ini` / `models-1.ini`** — per-model sampling params and global server flags (`[*]` section) for the Vulkan0:8080 and Vulkan1:8081 routers respectively. Each instance is pinned to one GPU on the CLI (see `run.sh`), so presets must fit a single 32GB card — no `split-mode=layer`.
 
 ## Models
 
-Each preset must fit a single 32 GB card, since instances are pinned one-per-GPU (no `split-mode=layer`). Sized for TTY mode; if running from a desktop session, reduce `fit-target` in `models.ini` to account for the ~2–4 GB consumed by the desktop.
+Each preset must fit a single 32 GB card, since instances are pinned one-per-GPU (no `split-mode=layer`). Sized for TTY mode; if running from a desktop session, reduce `fit-target` in the corresponding `models-*.ini` file to account for the ~2–4 GB consumed by the desktop.
 
-| Preset | Model |
-|---|---|
-| `qwen3.6-27b` | Qwen3.6 27B Q8_0 with built-in MTP |
-| `gemma4-31b` | Gemma 4 31B Q8_0 with an MTP draft model — weights + draft are ~31.5 GB, leaving very little headroom for context on a 32 GB card; drop to a smaller quant if `fit=true` can't find a usable context size |
+| Router | Preset | Model |
+|---|---|---|
+| Vulkan0:8080 | `qwen3.6-27b` | Qwen3.6 27B UD-Q6_K_XL with built-in MTP |
+| Vulkan0:8080 | `gemma4-31b` | Gemma 4 31B Q6_K with an MTP draft model |
+| Vulkan1:8081 | `qwen3.6-35b-a3b` | Qwen3.6 35B-A3B MoE UD-Q5_K_XL, two parallel slots, MTP disabled |
+| Vulkan1:8081 | `gemma4-26b-a4b` | Gemma 4 26B-A4B MoE UD-Q6_K_XL, two parallel slots, MTP disabled |
 
-Both presets are available on both instances (`models.ini` is shared); Open WebUI will list each once per backend. Context is auto-fit to available VRAM (`fit-target = 256` in `models.ini`).
+The files are independent: instance 0 contains the dense presets, while instance 1 contains only MoE presets and allows two parallel calls. Open WebUI lists each preset on its configured backend. Context is auto-fit to available VRAM (`fit-target = 256` in each file).
 
 ### Adding or changing models
 
@@ -126,7 +128,7 @@ Both presets are available on both instances (`models.ini` is shared); Open WebU
 
 The optional fourth column renames the downloaded file locally. Run `./models/update.sh` to download models without rebuilding, or use the top-level `./update.sh` workflow.
 
-**2.** Add a preset section in `models.ini`:
+**2.** Add a preset section to `models-0.ini`, `models-1.ini`, or both:
 
 ```ini
 [my-model@q5]
@@ -151,7 +153,8 @@ install.sh                  # first-time setup (deps, clone, systemd service)
 run.sh                      # launch Open WebUI + two llama-server instances (Vulkan0:8080, Vulkan1:8081)
 update.sh                   # stop, rebuild, update models, start
 start.sh / stop.sh          # systemd service control
-models.ini                  # router preset, shared by both instances
+models-0.ini                # Vulkan0:8080 router presets
+models-1.ini                # Vulkan1:8081 router presets
 llama.cpp/                  # llama.cpp source + build (cloned by install.sh, gitignored)
 models/
   list.txt                  # tab-separated HuggingFace model manifest

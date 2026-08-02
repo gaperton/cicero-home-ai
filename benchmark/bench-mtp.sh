@@ -55,7 +55,7 @@ FILTER="${1:-}"
 
 PROMPT='Write a detailed paragraph about the history of the Roman Empire, covering its founding, expansion, and eventual fall. Then explain three lasting influences it had on modern law and government.'
 
-# Per-family recommended sampling (matches models.ini presets) — greedy
+# Per-family recommended sampling (matches models-*.ini presets) — greedy
 # (temperature 0, no repeat penalty) reliably drives long unpenalized
 # generations into repetition loops, which some model/quant combos escape
 # differently under batched draft-verification than under plain sequential

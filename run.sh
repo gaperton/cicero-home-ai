@@ -22,7 +22,7 @@ trap 'kill "${PIDS[@]}" 2>/dev/null' EXIT
 # shellcheck disable=SC2086
 "$SCRIPT_DIR/llama.cpp/llama-server" \
     $SERVER_FLAGS \
-    --models-preset "$SCRIPT_DIR/models.ini" \
+    --models-preset "$SCRIPT_DIR/models-0.ini" \
     --device Vulkan0 \
     --port 8080 &
 PIDS+=("$!")
@@ -30,7 +30,7 @@ PIDS+=("$!")
 # shellcheck disable=SC2086
 "$SCRIPT_DIR/llama.cpp/llama-server" \
     $SERVER_FLAGS \
-    --models-preset "$SCRIPT_DIR/models.ini" \
+    --models-preset "$SCRIPT_DIR/models-1.ini" \
     --device Vulkan1 \
     --port 8081 &
 PIDS+=("$!")

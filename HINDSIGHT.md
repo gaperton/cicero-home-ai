@@ -7,7 +7,7 @@ This machine runs a local-only Hindsight memory server backed by the Ubuntu Post
 - Hindsight API: `http://127.0.0.1:8888`
 - PostgreSQL: `127.0.0.1:5432` and the local Unix socket
 - LLM: secondary llama.cpp router at `http://127.0.0.1:8081/v1`
-- LLM model: `qwen3.6-27b`
+- LLM model: `qwen3.6-35b-a3b`
 - Embeddings: `BAAI/bge-m3`, local CPU inference
 - Reranker: `BAAI/bge-reranker-v2-m3`, local CPU inference
 - Database: `hindsight`
@@ -74,8 +74,8 @@ Do not change the embedding model casually after storing real data.
 Hindsight uses the secondary llama.cpp router so it does not contend with the primary endpoint:
 
 - Endpoint: `http://127.0.0.1:8081/v1`
-- Model: `qwen3.6-27b`
-- Hindsight LLM concurrency: 1
+- Model: `qwen3.6-35b-a3b`
+- Hindsight LLM concurrency: 2
 - Timeout: 300 seconds
 - Strict structured schemas: enabled
 - Qwen thinking: disabled with `chat_template_kwargs.enable_thinking=false`

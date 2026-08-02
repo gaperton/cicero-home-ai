@@ -14,19 +14,20 @@ Two `llama-server` instances, built from a single Vulkan `llama.cpp/` checkout a
 
 **Layout:**
 - `.env` — Vulkan cmake flags and `SERVER_FLAGS`
-- `models.ini` — shared router preset for both instances (no split-mode; `--device` on the CLI pins each instance to its GPU)
+- `models-0.ini` / `models-1.ini` — independent router presets for Vulkan0:8080 and Vulkan1:8081 (no split-mode)
 - `llama.cpp/` — cloned separately (gitignored), built binaries live here alongside source; the same build/binaries are reused by `benchmark/` (no separate checkout)
 - `benchmark/` — `bench.sh` / `bench-mtp.sh` run ad hoc comparisons against the shared `../llama.cpp/` build, not a standalone checkout
 
 **Script flow:**
-- `run-tmux.sh` → `run.sh` → Open WebUI + two `llama-server --models-preset models.ini` instances (one per `--device`/port)
+- `run-tmux.sh` → `run.sh` → Open WebUI + two `llama-server` instances, using `models-0.ini` on Vulkan0:8080 and `models-1.ini` on Vulkan1:8081
 - `update.sh` → stop service → `build.sh` (git pull + rebuild) → download models → start service
 
 ## Key conventions
 
 - `llama.cpp` is **not a git submodule** — it is cloned by `install.sh` into `llama.cpp/`, and updated by `build.sh` (`git pull`), always tracking latest.
-- Sampling params live in `models.ini` per-model sections; global server flags in the `[*]` section.
+- Sampling params live in each `models-*.ini` file's per-model sections; global server flags in its `[*]` section.
 - Always set `repeat-penalty = 1.0` (or `--repeat-penalty 1.0`) in any model preset to explicitly disable it.
 - Agent-facing model presets (used by Claude Code, Cursor, etc.) should **not** include sampling params — agents send their own and override server defaults anyway.
 - Models are sized for TTY mode (no desktop). Max context fits in 32GB VRAM per GPU only without a running desktop session.
-- Model presets in `models.ini` must fit a single 32GB card — no `split-mode=layer`, since each instance only sees one GPU.
+- Model presets in each `models-*.ini` file must fit a single 32GB card — no `split-mode=layer`, since each instance only sees one GPU.
+- `models-1.ini` is the MoE-only secondary router and uses `parallel = 2`; MTP stays disabled there unless end-to-end benchmarks prove it is not slower for the prompt-heavy workload.
