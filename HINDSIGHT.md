@@ -8,6 +8,7 @@ This machine runs a local-only Hindsight memory server backed by the Ubuntu Post
 - PostgreSQL: `127.0.0.1:5432` and the local Unix socket
 - LLM: secondary llama.cpp router at `http://127.0.0.1:8081/v1`
 - LLM model: `qwen3.6-35b-a3b`
+- LLM router config: `models-1.ini`, MoE-only, two inference slots
 - Embeddings: `BAAI/bge-m3`, local CPU inference
 - Reranker: `BAAI/bge-reranker-v2-m3`, local CPU inference
 - Database: `hindsight`
@@ -23,7 +24,12 @@ Verified on 2026-08-02:
 - PostgreSQL: 18.4
 - pgvector: 0.8.1
 - `pg_trgm`: 1.6
+- PyTorch: 2.13.0+cpu
+- SentenceTransformers: 5.6.1
+- asyncpg: 0.31.0
 - Embedding columns: `vector(1024)`
+
+The 2026-08-02 installation audit also verified that the Hindsight and PostgreSQL services are enabled and active, the OpenAPI document exposes 57 paths, and no warning-or-higher journal entries occurred after the current Hindsight activation.
 
 ## Files and data
 
@@ -34,7 +40,7 @@ Verified on 2026-08-02:
 - PostgreSQL setup script: `/home/gaperton/.local/share/hindsight/configure-postgresql.sh`
 - Inactive embedded pg0 data: `/home/gaperton/.local/share/hindsight/.pg0`
 
-The embedded pg0 directory is retained only as rollback data. The active service uses Ubuntu PostgreSQL.
+The embedded pg0 directory is retained only as rollback data. It occupies approximately 139 MiB, has no active pg0 process, and is not used by the service. The active service uses Ubuntu PostgreSQL.
 
 ## Multilingual retrieval
 
@@ -75,14 +81,22 @@ Hindsight uses the secondary llama.cpp router so it does not contend with the pr
 
 - Endpoint: `http://127.0.0.1:8081/v1`
 - Model: `qwen3.6-35b-a3b`
+- Quantization: `UD-Q5_K_XL`
 - Hindsight LLM concurrency: 2
+- Router slots: 2, with 131072 tokens per slot when this model is loaded
+- Continuous batching: enabled
 - Timeout: 300 seconds
 - Strict structured schemas: enabled
 - Qwen thinking: disabled with `chat_template_kwargs.enable_thinking=false`
+- Qwen speculative decoding: `draft-mtp`, depth 4 in the current router config
 
 Thinking is disabled because reasoning tokens can exhaust Hindsight's bounded structured-output calls before Qwen emits the required result.
 
-`gemma4-31b` was also tested successfully with Retain, Recall, consolidation, Reflect, and strict schemas. Qwen remains the conservative default. Hindsight's strongest official local recommendation is `gpt-oss-20b`, which is not currently installed as a llama.cpp preset.
+The secondary router also offers `gemma4-26b-a4b` at `UD-Q6_K_XL`. Gemma MTP is disabled because every locally tested draft depth reduced generation throughput. Hindsight currently selects Qwen, not Gemma.
+
+The saved Qwen Q5_K_XL benchmark validates MTP depth 2 for generation throughput: 109.51 to 134.10 tokens/s, while prompt throughput fell from 368.73 to 312.94 tokens/s. The active depth-4 setting has passed Hindsight correctness checks but does **not** yet have a matching controlled no-regression benchmark. Do not treat depth 4 as performance-approved until it is compared with depth 2 and no MTP using a representative prompt-heavy Hindsight workload.
+
+Hindsight's strongest official local recommendation is `gpt-oss-20b`, which is not currently installed as a llama.cpp preset.
 
 ## Service management
 
@@ -119,7 +133,7 @@ Recent errors only:
 journalctl --user-unit hindsight.service --since today -p err
 ```
 
-Both PostgreSQL and Hindsight are enabled at boot. The Hindsight unit uses `Restart=on-failure`, so it retries if PostgreSQL or llama.cpp is temporarily unavailable during startup.
+Both PostgreSQL and Hindsight are enabled at boot. The Hindsight unit uses `Restart=on-failure`. Its unit orders startup after `cicero-home-ai.service`, but the Hindsight process can still start and report database health when the llama.cpp router is unavailable because LLM connections are opened lazily.
 
 ## Health and API discovery
 
@@ -128,6 +142,15 @@ Health check:
 ```bash
 curl -fsS http://127.0.0.1:8888/health
 ```
+
+This endpoint verifies Hindsight and database-pool health; it does **not** verify the configured LLM. Check the router separately:
+
+```bash
+curl -fsS http://127.0.0.1:8081/health
+curl -fsS http://127.0.0.1:8081/v1/models
+```
+
+Hindsight 0.8.6 also exposes `POST /v1/default/banks/{bank_id}/health/llm`, but this installation leaves it disabled. It returns HTTP 404 unless `HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=true` is configured. Retain, Recall, consolidation, and Reflect do not require that optional endpoint to be enabled.
 
 OpenAPI schema:
 
@@ -155,7 +178,7 @@ WHERE extname IN ('vector', 'pg_trgm')
 ORDER BY extname;
 ```
 
-The role is not a superuser and cannot create roles or databases. Public connection access to the `hindsight` database has been revoked. PostgreSQL listens only on localhost.
+The role is not a superuser and cannot create roles or databases. Public connection access to the `hindsight` database has been revoked. PostgreSQL listens only on localhost. The 2026-08-02 audit verified both 1024-dimensional embedding columns, both HNSW embedding indexes, and zero banks, memory units, or mental models after test cleanup.
 
 ## Backups
 
@@ -175,9 +198,23 @@ pg_restore --list /home/gaperton/backups/hindsight/hindsight-TIMESTAMP.dump
 
 Restore into an empty database only after stopping Hindsight. A typical restore must be run by a PostgreSQL administrator because replacing the database is destructive. Keep the dump, Hindsight version, embedding model, and vector dimension together in operational records.
 
-## Verified multilingual behavior
+## Verified behavior
 
-A six-document smoke corpus included Russian and English facts plus similar distractors. The following retrieval directions all returned the correct top result:
+### Active Qwen MoE installation audit
+
+With the configured `qwen3.6-35b-a3b` Q5_K_XL model, strict schemas, thinking disabled, and two router slots, a temporary-bank test passed:
+
+| Operation | Result | Latency |
+| --- | --- | ---: |
+| Retain | strict-schema extraction passed | 11.563 s |
+| Recall | Russian query retrieved the English access-code memory | 0.956 s |
+| Reflect | returned the exact access code | 8.691 s |
+
+The test bank was deleted afterward, and PostgreSQL returned to zero banks and zero memory units. This is focused ad-hoc verification, not a benchmark suite. During the audit the secondary router was started temporarily and stopped afterward; the normal `cicero-home-ai.service` remains responsible for port 8081 during regular operation.
+
+### Earlier multilingual retrieval matrix
+
+An earlier six-document smoke corpus, run before the active Qwen MoE switch, included Russian and English facts plus similar distractors. The following retrieval directions all returned the correct top result:
 
 | Direction | Query target | Recall latency |
 | --- | --- | ---: |
@@ -196,6 +233,8 @@ After the multilingual models were loaded and exercised:
 
 - Hindsight RSS: approximately 4.0 GiB
 - Hugging Face cache: approximately 6.6 GiB, including current and previously used models
+- Hindsight virtual environment: approximately 2.1 GiB
+- Inactive embedded pg0 rollback directory: approximately 139 MiB
 - BGE model cold start: approximately 1 minute 50 seconds during the first download and load
 - Warm restarts still load both models from disk and are slower than the former small-model setup
 
