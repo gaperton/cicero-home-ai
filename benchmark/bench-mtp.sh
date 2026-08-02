@@ -30,7 +30,7 @@ MODELS_DIR="$SCRIPT_DIR/../models"
 
 BENCH_SERVER="${BENCH_SERVER:-$LLAMA_DIR/llama-server}"
 DEVICE="${DEVICE:-Vulkan0}"
-FIT_TARGET_MIB="${FIT_TARGET_MIB:-512}"   # VRAM margin left free per device, see -fitt
+FIT_TARGET_MIB="${FIT_TARGET_MIB:-256}"   # VRAM margin left free per device, see -fitt
 CTK="${CTK:-q8_0}"
 CTV="${CTV:-q8_0}"
 N_PREDICT="${N_PREDICT:-768}"  # 256*3
@@ -64,7 +64,6 @@ MODELS=(
     "Gemma 4 31B · UD-Q5_K_XL|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-UD-Q5_K_XL.gguf|$GEMMA_MTP"
     "Gemma 4 31B · Q6_K|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-Q6_K.gguf|$GEMMA_MTP"
     "Gemma 4 31B · UD-Q6_K_XL|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-UD-Q6_K_XL.gguf|$GEMMA_MTP"
-    "Gemma 4 31B · Q8_0|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-Q8_0.gguf|$GEMMA_MTP"
 )
 
 SERVER_PID=""
