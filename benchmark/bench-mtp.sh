@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
-# bench-mtp.sh — For each Qwen 3.6 27B and Gemma 4 31B quant, autofit context
-# with a Q8_0 KV cache and measure decode t/s with and without MTP
-# (multi-token-prediction / self-speculative decoding).
+# bench-mtp.sh — For each Qwen 3.6 27B/35B-A3B and Gemma 4 31B/26B-A4B quant,
+# autofit context with a Q8_0 KV cache and measure decode t/s with and without
+# MTP (multi-token-prediction / self-speculative decoding).
 #
 # Qwen 3.6's MTP head is baked into the main gguf (qwen35.nextn_predict_layers),
 # so --spec-type draft-mtp alone runs it against the target model itself.
 # Gemma 4 ships its MTP head as a separate small "gemma4-assistant" gguf
-# (see models/Gemma4-31B/MTP/, models/Gemma4-31B-QAT/MTP/), so those entries
-# also need -md pointing at that sidecar file.
+# (see models/Gemma4-31B/MTP/, models/Gemma4-31B-QAT/MTP/ for the dense model,
+# models/Gemma4-26B-A4B/ and models/Gemma4-26B-A4B-QAT/ for the MoE — the MoE
+# sidecar sits at the repo root, not under an MTP/ subfolder), so those
+# entries also need -md pointing at that sidecar file.
+#
+# Expect autofit ctx to stay IDENTICAL between baseline and draft-mtp for all
+# Gemma rows (confirmed across every report so far) — its sidecar gguf is only
+# ~250-460 MiB, too small to move the KV-cache fit. Qwen has no such sidecar
+# (its MTP head is baked into the target gguf), yet its autofit ctx still
+# *shrinks* under draft-mtp once a quant is already near the 31GiB ceiling
+# (Q6_K_XL, Q8_0) — the speculative-decoding buffers themselves need enough
+# extra VRAM to matter there. If a Gemma row ever shows differing ctx between
+# modes, or a Qwen row shrinks even at small quants, treat it as a signal
+# something changed (llama.cpp fit accounting, sidecar size, etc.), not noise.
 #
 # llama-bench has no speculative-decoding support, so this drives llama-server
 # directly: boot it with -fit on (to discover how much context fits once the
@@ -43,6 +55,15 @@ FILTER="${1:-}"
 
 PROMPT='Write a detailed paragraph about the history of the Roman Empire, covering its founding, expansion, and eventual fall. Then explain three lasting influences it had on modern law and government.'
 
+# Per-family recommended sampling (matches models.ini presets) — greedy
+# (temperature 0, no repeat penalty) reliably drives long unpenalized
+# generations into repetition loops, which some model/quant combos escape
+# differently under batched draft-verification than under plain sequential
+# decode, producing spurious pass/fail deltas that have nothing to do with
+# MTP itself. Sampling stochastically like real usage avoids that.
+QWEN_SAMPLING='"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.00, "repeat_penalty": 1.0, "presence_penalty": 0'
+GEMMA_SAMPLING='"temperature": 1.0, "top_p": 0.95, "top_k": 64, "min_p": 0.00, "repeat_penalty": 1.0, "presence_penalty": 0'
+
 if [[ ! -x "$BENCH_SERVER" ]]; then
     echo "Error: $BENCH_SERVER not found. Run ../build.sh first." >&2
     exit 1
@@ -53,6 +74,8 @@ mkdir -p "$REPORTS_DIR"
 # label|model_path|draft_path (draft_path empty = MTP head is baked into model_path)
 GEMMA_MTP="$MODELS_DIR/Gemma4-31B/MTP/mtp-gemma-4-31B-it-Q8_0.gguf"
 GEMMA_QAT_MTP="$MODELS_DIR/Gemma4-31B-QAT/MTP/mtp-gemma-4-31B-it-Q8_0.gguf"
+GEMMA_MOE_MTP="$MODELS_DIR/Gemma4-26B-A4B/mtp-gemma-4-26B-A4B-it.gguf"
+GEMMA_MOE_QAT_MTP="$MODELS_DIR/Gemma4-26B-A4B-QAT/mtp-gemma-4-26B-A4B-it.gguf"
 
 MODELS=(
     "Qwen 3.6 27B · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q4_K_XL.gguf|"
@@ -60,10 +83,16 @@ MODELS=(
     "Qwen 3.6 27B · UD-Q6_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q6_K_XL.gguf|"
     "Qwen 3.6 27B · Q6_K|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q6_K.gguf|"
     "Qwen 3.6 27B · Q8_0|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q8_0.gguf|"
+    "Qwen 3.6 35B-A3B · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf|"
+    "Qwen 3.6 35B-A3B · UD-Q5_K_S|$MODELS_DIR/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-Q5_K_S.gguf|"
+    "Qwen 3.6 35B-A3B · UD-Q5_K_XL|$MODELS_DIR/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf|"
     "Gemma 4 31B QAT · UD-Q4_K_XL|$MODELS_DIR/Gemma4-31B-QAT/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf|$GEMMA_QAT_MTP"
     "Gemma 4 31B · UD-Q5_K_XL|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-UD-Q5_K_XL.gguf|$GEMMA_MTP"
     "Gemma 4 31B · Q6_K|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-Q6_K.gguf|$GEMMA_MTP"
     "Gemma 4 31B · UD-Q6_K_XL|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-UD-Q6_K_XL.gguf|$GEMMA_MTP"
+    "Gemma 4 26B-A4B QAT · UD-Q4_K_XL|$MODELS_DIR/Gemma4-26B-A4B-QAT/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf|$GEMMA_MOE_QAT_MTP"
+    "Gemma 4 26B-A4B · UD-Q5_K_XL|$MODELS_DIR/Gemma4-26B-A4B/gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf|$GEMMA_MOE_MTP"
+    "Gemma 4 26B-A4B · UD-Q6_K_XL|$MODELS_DIR/Gemma4-26B-A4B/gemma-4-26B-A4B-it-UD-Q6_K_XL.gguf|$GEMMA_MOE_MTP"
 )
 
 SERVER_PID=""
@@ -128,7 +157,7 @@ stop_server() {
 run_completion() {
     curl -s "http://127.0.0.1:$PORT/completion" \
         -H "Content-Type: application/json" \
-        -d "{\"prompt\": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$PROMPT"), \"n_predict\": $N_PREDICT, \"temperature\": 0, \"cache_prompt\": false}" \
+        -d "{\"prompt\": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$PROMPT"), \"n_predict\": $N_PREDICT, $sampling_params, \"cache_prompt\": false}" \
     | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
@@ -239,6 +268,9 @@ for entry in "${MODELS[@]}"; do
         echo "Skipping $label: MTP draft not found: $draft_path" | tee -a "$OUTFILE"
         continue
     fi
+
+    sampling_params="$QWEN_SAMPLING"
+    [[ "$label" == Gemma* ]] && sampling_params="$GEMMA_SAMPLING"
 
     mtp_flags="--spec-type draft-mtp --spec-draft-n-max $SPEC_DRAFT_N_MAX"
     [[ -n "$draft_path" ]] && mtp_flags="$mtp_flags -md $draft_path"
