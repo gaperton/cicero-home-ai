@@ -1,10 +1,16 @@
 # local folder <TAB> HuggingFace repo <TAB> filename in repo — one model per line.
 Qwen3.6-27B	unsloth/Qwen3.6-27B-MTP-GGUF	Qwen3.6-27B-Q8_0.gguf
+Qwen3.6-27B	unsloth/Qwen3.6-27B-MTP-GGUF	Qwen3.6-27B-UD-Q4_K_XL.gguf
+Qwen3.6-27B	unsloth/Qwen3.6-27B-MTP-GGUF	Qwen3.6-27B-UD-Q5_K_XL.gguf
+Qwen3.6-27B	unsloth/Qwen3.6-27B-MTP-GGUF	Qwen3.6-27B-UD-Q6_K_XL.gguf
+Qwen3.6-27B	unsloth/Qwen3.6-27B-MTP-GGUF	Qwen3.6-27B-Q6_K.gguf
 Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-Q8_0.gguf
+Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-Q6_K.gguf
+Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-UD-Q5_K_XL.gguf
 Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	MTP/mtp-gemma-4-31B-it-Q8_0.gguf
 Gemma4-31B-QAT	unsloth/gemma-4-31B-it-qat-GGUF	gemma-4-31B-it-qat-UD-Q4_K_XL.gguf
 Gemma4-31B-QAT	unsloth/gemma-4-31B-it-qat-GGUF	MTP/mtp-gemma-4-31B-it-Q8_0.gguf
-DeepSeek-V4-Flash	unsloth/DeepSeek-V4-Flash-GGUF	UD-Q3_K_XL/DeepSeek-V4-Flash-UD-Q3_K_XL-00001-of-00004.gguf
-DeepSeek-V4-Flash	unsloth/DeepSeek-V4-Flash-GGUF	UD-Q3_K_XL/DeepSeek-V4-Flash-UD-Q3_K_XL-00002-of-00004.gguf
-DeepSeek-V4-Flash	unsloth/DeepSeek-V4-Flash-GGUF	UD-Q3_K_XL/DeepSeek-V4-Flash-UD-Q3_K_XL-00003-of-00004.gguf
-DeepSeek-V4-Flash	unsloth/DeepSeek-V4-Flash-GGUF	UD-Q3_K_XL/DeepSeek-V4-Flash-UD-Q3_K_XL-00004-of-00004.gguf
+DeepSeek-V4-Flash-0731	unsloth/DeepSeek-V4-Flash-0731-GGUF	UD-IQ3_XXS/DeepSeek-V4-Flash-0731-UD-IQ3_XXS-00001-of-00004.gguf
+DeepSeek-V4-Flash-0731	unsloth/DeepSeek-V4-Flash-0731-GGUF	UD-IQ3_XXS/DeepSeek-V4-Flash-0731-UD-IQ3_XXS-00002-of-00004.gguf
+DeepSeek-V4-Flash-0731	unsloth/DeepSeek-V4-Flash-0731-GGUF	UD-IQ3_XXS/DeepSeek-V4-Flash-0731-UD-IQ3_XXS-00003-of-00004.gguf
+DeepSeek-V4-Flash-0731	unsloth/DeepSeek-V4-Flash-0731-GGUF	UD-IQ3_XXS/DeepSeek-V4-Flash-0731-UD-IQ3_XXS-00004-of-00004.gguf

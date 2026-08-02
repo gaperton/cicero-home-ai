@@ -23,8 +23,11 @@ fi
 mkdir -p "$REPORTS_DIR"
 
 MODELS=(
-    "Qwen 3.6 27B · Q8_0|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q8_0.gguf"
+    "Qwen 3.6 27B · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q4_K_XL.gguf"
     "Qwen 3.6 27B · UD-Q5_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q5_K_XL.gguf"
+    "Qwen 3.6 27B · UD-Q6_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q6_K_XL.gguf"
+    "Qwen 3.6 27B · Q6_K|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q6_K.gguf"
+    "Qwen 3.6 27B · Q8_0|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q8_0.gguf"
     "Gemma 4 31B QAT · UD-Q4_K_XL|$MODELS_DIR/Gemma4-31B-QAT/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf"
 )
 
