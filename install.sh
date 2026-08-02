@@ -39,7 +39,7 @@ sudo -u "$SUDO_USER" mkdir -p "$SCRIPT_DIR/logs"
 # Install and enable the systemd user service
 USER_SYSTEMD_DIR="$SUDO_HOME/.config/systemd/user"
 sudo -u "$SUDO_USER" mkdir -p "$USER_SYSTEMD_DIR"
-sed "s|/home/gaperton/data/cicero-home-ai|$SCRIPT_DIR|g" \
+sed "s|/home/gaperton/cicero-home-ai|$SCRIPT_DIR|g" \
     "$SCRIPT_DIR/systemd/cicero-home-ai.service" \
     > "$USER_SYSTEMD_DIR/cicero-home-ai.service"
 chown "$SUDO_USER:$SUDO_USER" "$USER_SYSTEMD_DIR/cicero-home-ai.service"
