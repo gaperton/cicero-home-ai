@@ -25,10 +25,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-LLAMA_DIR="$SCRIPT_DIR/llama.cpp"
+LLAMA_DIR="$SCRIPT_DIR/../llama.cpp"
 MODELS_DIR="$SCRIPT_DIR/../models"
 
-BENCH_SERVER="${BENCH_SERVER:-$LLAMA_DIR/build/bin/llama-server}"
+BENCH_SERVER="${BENCH_SERVER:-$LLAMA_DIR/llama-server}"
 DEVICE="${DEVICE:-Vulkan0}"
 FIT_TARGET_MIB="${FIT_TARGET_MIB:-512}"   # VRAM margin left free per device, see -fitt
 CTK="${CTK:-q8_0}"
@@ -44,7 +44,7 @@ FILTER="${1:-}"
 PROMPT='Write a detailed paragraph about the history of the Roman Empire, covering its founding, expansion, and eventual fall. Then explain three lasting influences it had on modern law and government.'
 
 if [[ ! -x "$BENCH_SERVER" ]]; then
-    echo "Error: $BENCH_SERVER not found. Run init.sh first." >&2
+    echo "Error: $BENCH_SERVER not found. Run ../build.sh first." >&2
     exit 1
 fi
 
@@ -60,10 +60,11 @@ MODELS=(
     "Qwen 3.6 27B · UD-Q6_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q6_K_XL.gguf|"
     "Qwen 3.6 27B · Q6_K|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q6_K.gguf|"
     "Qwen 3.6 27B · Q8_0|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q8_0.gguf|"
+    "Gemma 4 31B QAT · UD-Q4_K_XL|$MODELS_DIR/Gemma4-31B-QAT/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf|$GEMMA_QAT_MTP"
     "Gemma 4 31B · UD-Q5_K_XL|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-UD-Q5_K_XL.gguf|$GEMMA_MTP"
     "Gemma 4 31B · Q6_K|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-Q6_K.gguf|$GEMMA_MTP"
+    "Gemma 4 31B · UD-Q6_K_XL|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-UD-Q6_K_XL.gguf|$GEMMA_MTP"
     "Gemma 4 31B · Q8_0|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-Q8_0.gguf|$GEMMA_MTP"
-    "Gemma 4 31B QAT · UD-Q4_K_XL|$MODELS_DIR/Gemma4-31B-QAT/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf|$GEMMA_QAT_MTP"
 )
 
 SERVER_PID=""

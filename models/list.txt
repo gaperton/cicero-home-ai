@@ -7,6 +7,7 @@ Qwen3.6-27B	unsloth/Qwen3.6-27B-MTP-GGUF	Qwen3.6-27B-Q6_K.gguf
 Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-Q8_0.gguf
 Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-Q6_K.gguf
 Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-UD-Q5_K_XL.gguf
+Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-UD-Q6_K_XL.gguf
 Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	MTP/mtp-gemma-4-31B-it-Q8_0.gguf
 Gemma4-31B-QAT	unsloth/gemma-4-31B-it-qat-GGUF	gemma-4-31B-it-qat-UD-Q4_K_XL.gguf
 Gemma4-31B-QAT	unsloth/gemma-4-31B-it-qat-GGUF	MTP/mtp-gemma-4-31B-it-Q8_0.gguf

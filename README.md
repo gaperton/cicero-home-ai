@@ -4,11 +4,11 @@ Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/ll
 
 ## How it works
 
-`llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the model name in the request; when a model isn't loaded, the router starts a child process for it and proxies the request. With `--models-max 1`, only one model is in VRAM at a time (LRU eviction).
+`llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the model name in the request; when a model isn't loaded, the router starts a child process for it and proxies the request. With `--models-max 1`, only one model is in VRAM at a time per instance (LRU eviction).
 
-A single instance runs on port 8080, split across both GPUs (`split-mode=layer`), preset from `models.ini`.
+Two instances run side by side, one per GPU (Vulkan backend, no layer-split): port 8080 on GPU0, port 8081 on GPU1, both loading presets from the same `models.ini`. Running each GPU independently outperforms splitting a single model across both cards, and lets two different models stay resident at once.
 
-**Open WebUI** runs on port 3000, pointed at the llama-server endpoint.
+**Open WebUI** runs on port 3000, pointed at both llama-server endpoints.
 
 | Script | What it does |
 |---|---|
@@ -17,7 +17,8 @@ A single instance runs on port 8080, split across both GPUs (`split-mode=layer`)
 | `start.sh` | Start the service via `systemctl --user`. |
 | `stop.sh` | Stop the service via `systemctl --user`. |
 | `run.sh` | Start the full stack (llama-server + Open WebUI) in the foreground. Called by the systemd service. |
-| `benchmark/bench.sh` | Run `llama-bench` and save a Markdown report under `benchmark/reports/`. |
+| `benchmark/bench.sh` | Run `llama-bench` (single GPU, Vulkan) and save a Markdown report under `benchmark/reports/`. |
+| `benchmark/bench-mtp.sh` | Boot `llama-server` per model/quant and measure MTP speculative-decoding speedup. |
 
 ## Usage
 
@@ -30,7 +31,7 @@ A single instance runs on port 8080, split across both GPUs (`split-mode=layer`)
 
 ## Installation
 
-Configured for an AMD GPU with ROCm. Requires a working ROCm/HIP SDK with `hipconfig` on `PATH`.
+Configured for AMD GPUs using the Vulkan backend (via Mesa RADV) — no ROCm/HIP SDK required.
 
 1. Install Linux Mint Cinnamon (or Ubuntu; Mint/Ubuntu assumed below)
 2. Clone this repo and `cd` into it
@@ -95,25 +96,25 @@ tail -f logs/autostart.log
 
 ## Configuration
 
-**`.env`** — ROCm build flags and server flags:
+**`.env`** — Vulkan build flags and server flags:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CMAKE_FLAGS` | `-DGGML_HIP=ON ...` | CMake flags for the llama.cpp build. Adjust `GPU_TARGETS` for your GPU. |
-| `SERVER_FLAGS` | `--host 0.0.0.0 --models-max 1` | Flags passed to the `llama-server` instance. |
+| `CMAKE_FLAGS` | `-DGGML_VULKAN=ON -DGGML_NATIVE=1 ...` | CMake flags for the llama.cpp build. |
+| `SERVER_FLAGS` | `--host 0.0.0.0 --models-max 1` | Flags passed to each `llama-server` instance. |
 
-**`models.ini`** — per-model sampling params and global server flags (`[*]` section).
+**`models.ini`** — per-model sampling params and global server flags (`[*]` section), shared by both instances. Each instance is pinned to its GPU via `--device Vulkan0`/`Vulkan1` on the CLI (see `run.sh`), so presets must fit a single 32GB card — no `split-mode=layer`.
 
 ## Models
 
-Sized to use the full 32 GB VRAM of the AMD R9700 in TTY mode. If running from a desktop session, reduce `fit-target` in `models.ini` to account for the ~2–4 GB consumed by the desktop.
+Each preset must fit a single 32 GB card, since instances are pinned one-per-GPU (no `split-mode=layer`). Sized for TTY mode; if running from a desktop session, reduce `fit-target` in `models.ini` to account for the ~2–4 GB consumed by the desktop.
 
 | Preset | Model |
 |---|---|
 | `qwen3.6-27b` | Qwen3.6 27B Q8_0 with built-in MTP |
-| `gemma4-31b` | Gemma 4 31B Q8_0 with an MTP draft model |
+| `gemma4-31b` | Gemma 4 31B Q8_0 with an MTP draft model — weights + draft are ~31.5 GB, leaving very little headroom for context on a 32 GB card; drop to a smaller quant if `fit=true` can't find a usable context size |
 
-Context is auto-fit to available VRAM (`fit-target = 256` in `models.ini`).
+Both presets are available on both instances (`models.ini` is shared); Open WebUI will list each once per backend. Context is auto-fit to available VRAM (`fit-target = 256` in `models.ini`).
 
 ### Adding or changing models
 
@@ -144,13 +145,13 @@ repeat-penalty = 1.0
 ## Layout
 
 ```
-.env                        # ROCm cmake flags + SERVER_FLAGS
+.env                        # Vulkan cmake flags + SERVER_FLAGS
 build.sh                    # git pull + rebuild
 install.sh                  # first-time setup (deps, clone, systemd service)
-run.sh                      # launch Open WebUI + llama-server (split-mode=layer, both GPUs, port 8080)
+run.sh                      # launch Open WebUI + two llama-server instances (Vulkan0:8080, Vulkan1:8081)
 update.sh                   # stop, rebuild, update models, start
 start.sh / stop.sh          # systemd service control
-models.ini                  # router preset
+models.ini                  # router preset, shared by both instances
 llama.cpp/                  # llama.cpp source + build (cloned by install.sh, gitignored)
 models/
   list.txt                  # tab-separated HuggingFace model manifest
@@ -159,9 +160,8 @@ models/
   <model>/
     *.gguf                   # downloaded model files
 benchmark/
-  bench.sh                   # dense-model benchmark runner
-  bench-moe.sh                # MoE benchmark runner
-  analysis/                   # benchmark analyses
+  bench.sh                   # llama-bench runner (single GPU, Vulkan) using ../llama.cpp
+  bench-mtp.sh                 # MTP speculative-decoding benchmark, drives llama-server directly
   reports/                    # generated benchmark reports
 systemd/
   cicero-home-ai.service      # user service template (installed to ~/.config/systemd/user/ by install.sh)

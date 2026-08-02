@@ -6,13 +6,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LLAMA_DIR="$SCRIPT_DIR/llama.cpp"
 
-# Install system dependencies (tmux, mc, node, etc.) plus llama.cpp's ROCm build deps
+# Install system dependencies (tmux, mc, node, etc.) plus llama.cpp's Vulkan build deps
 apt-get update
 apt-get install -y ripgrep ffmpeg pciutils pipx tmux mc nodejs npm \
-    build-essential cmake ccache curl libcurl4-openssl-dev
+    build-essential cmake ccache curl libcurl4-openssl-dev \
+    libvulkan-dev glslang-tools vulkan-tools mesa-vulkan-drivers
 
-# Clone the llama.cpp checkout. Assumes the ROCm/HIP SDK is already installed
-# (see .env — hipconfig must be on PATH).
+# Clone the llama.cpp checkout, built with the Vulkan backend (see .env).
 if [[ -d "$LLAMA_DIR/.git" ]]; then
     echo "llama.cpp checkout already exists at $LLAMA_DIR; skipping clone."
 else

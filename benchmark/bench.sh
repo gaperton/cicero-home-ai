@@ -1,28 +1,34 @@
 #!/usr/bin/env bash
-# bench.sh — Run one combined benchmark report: GPU 0, GPU 1, split=layer, split=row for all configured models.
+# bench.sh — Run llama-bench on a single GPU via the Vulkan backend, for the
+# 27B and 31B-QAT models. Uses the shared prod build in ../llama.cpp.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 LLAMA_DIR="$SCRIPT_DIR/../llama.cpp"
+MODELS_DIR="$SCRIPT_DIR/../models"
 
 BENCH="${BENCH:-$LLAMA_DIR/llama-bench}"
+DEVICE="${DEVICE:-Vulkan0}"
 BENCH_FLAGS="${BENCH_FLAGS:--ngl 99 -fa on -r 3}"
 REPORTS_DIR="${REPORTS_DIR:-reports}"
 OUTFILE="${OUTFILE:-$REPORTS_DIR/bench-$(date +%Y%m%d-%H%M%S).md}"
 
 if [[ ! -x "$BENCH" ]]; then
-    echo "Error: $BENCH not found. Run build.sh first." >&2
+    echo "Error: $BENCH not found. Run ../build.sh first." >&2
     exit 1
 fi
 
 mkdir -p "$REPORTS_DIR"
 
 MODELS=(
-    "Qwen 3.5 27B · UD-Q5_K_XL|models/Qwen3.5-27B-UD-Q5_K_XL.gguf"
-    "Qwen 3.6 35B-A3B · UD-Q5_K_XL|models/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf"
-    "Gemma 4 31B · UD-Q5_K_XL|models/gemma-4-31B-it-UD-Q5_K_XL.gguf"
+    "Qwen 3.6 27B · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q4_K_XL.gguf"
+    "Qwen 3.6 27B · UD-Q5_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q5_K_XL.gguf"
+    "Qwen 3.6 27B · UD-Q6_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q6_K_XL.gguf"
+    "Qwen 3.6 27B · Q6_K|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q6_K.gguf"
+    "Qwen 3.6 27B · Q8_0|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q8_0.gguf"
+    "Gemma 4 31B QAT · UD-Q4_K_XL|$MODELS_DIR/Gemma4-31B-QAT/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf"
 )
 
 write_system_info() {
@@ -42,7 +48,7 @@ write_system_info() {
     llama_ver=$(git -C "$LLAMA_DIR" log -1 --format="%h (%cd)" --date=short 2>/dev/null || echo "N/A")
 
     {
-        echo "# Benchmark Report — $(date)"
+        echo "# Vulkan Benchmark Report — $(date)"
         echo
         echo "## System Info"
         echo
@@ -52,14 +58,14 @@ write_system_info() {
         echo "| **RAM** | $ram |"
         echo "| **Kernel** | $kernel |"
         echo "| **llama.cpp** | $llama_ver |"
+        echo "| **Backend** | Vulkan ($DEVICE) |"
         echo
     } | tee "$OUTFILE"
 }
 
 run_bench_section() {
     local heading="$1"
-    shift
-    local model="${@: -1}"
+    local model="$2"
 
     if [[ ! -f "$model" ]]; then
         echo "Skipping missing model: $model" | tee -a "$OUTFILE"
@@ -73,11 +79,11 @@ run_bench_section() {
         echo "$heading"
     } >> "$OUTFILE"
 
-    "$BENCH" $BENCH_FLAGS "$@" -o md | tee -a "$OUTFILE"
+    "$BENCH" $BENCH_FLAGS -dev "$DEVICE" -m "$model" -o md | tee -a "$OUTFILE"
     echo >> "$OUTFILE"
 }
 
-echo "=== llama-bench — $(date) ==="
+echo "=== llama-bench (Vulkan, $DEVICE) — $(date) ==="
 echo "Saving to: $OUTFILE"
 echo
 
@@ -87,10 +93,7 @@ for entry in "${MODELS[@]}"; do
     label="${entry%%|*}"
     model="${entry##*|}"
 
-    run_bench_section "## $label · GPU 0 only" -dev ROCm0 -m "$model"
-    run_bench_section "## $label · GPU 1 only" -dev ROCm1 -m "$model"
-    run_bench_section "## $label · split=layer" -sm layer -m "$model"
-    run_bench_section "## $label · split=row" -sm row -m "$model"
+    run_bench_section "## $label · $DEVICE" "$model"
 done
 
 echo "=== Done ==="
