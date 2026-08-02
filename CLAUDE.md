@@ -19,7 +19,7 @@ Two `llama-server` instances, built from a single Vulkan `llama.cpp/` checkout a
 - `benchmark/` — `bench.sh` / `bench-mtp.sh` run ad hoc comparisons against the shared `../llama.cpp/` build, not a standalone checkout
 
 **Script flow:**
-- `run-tmux.sh` → `run.sh` → Open WebUI + two `llama-server` instances, using `models-0.ini` on Vulkan0:8080 and `models-1.ini` on Vulkan1:8081
+- `run-tmux.sh` → `run.sh` → Open WebUI + two `llama-server` instances, using `models-0.ini` on Vulkan0:8080 and `models-1.ini` on Vulkan1:8081; Open WebUI is configured only for the Vulkan0:8080 router, while Vulkan1:8081 is reserved for Hindsight and direct API clients
 - `update.sh` → stop service → `build.sh` (git pull + rebuild) → download models → start service
 
 ## Key conventions

@@ -8,7 +8,7 @@ Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/ll
 
 Two instances run side by side, one per GPU (Vulkan backend, no layer-split): port 8080 on GPU0 loads `models-0.ini`, while port 8081 on GPU1 loads `models-1.ini`. Running each GPU independently outperforms splitting a single model across both cards, and lets two different models stay resident at once.
 
-**Open WebUI** runs on port 3000, pointed at both llama-server endpoints.
+**Open WebUI** runs on port 3000 and uses only the primary Vulkan0 router on port 8080. The secondary Vulkan1 router on port 8081 is reserved for Hindsight and direct API clients. Both raw llama.cpp APIs remain reachable on the LAN as `http://cicero.local:8080/v1` and `http://cicero.local:8081/v1`.
 
 | Script | What it does |
 |---|---|
@@ -113,10 +113,10 @@ Each preset must fit a single 32 GB card, since instances are pinned one-per-GPU
 |---|---|---|
 | Vulkan0:8080 | `qwen3.6-27b` | Qwen3.6 27B UD-Q6_K_XL with built-in MTP |
 | Vulkan0:8080 | `gemma4-31b` | Gemma 4 31B Q6_K with an MTP draft model |
-| Vulkan1:8081 | `qwen3.6-35b-a3b` | Qwen3.6 35B-A3B MoE UD-Q5_K_XL, two parallel slots, MTP disabled |
+| Vulkan1:8081 | `qwen3.6-35b-a3b` | Qwen3.6 35B-A3B MoE UD-Q5_K_XL, two parallel slots, MTP depth 2 |
 | Vulkan1:8081 | `gemma4-26b-a4b` | Gemma 4 26B-A4B MoE UD-Q6_K_XL, two parallel slots, MTP disabled |
 
-The files are independent: instance 0 contains the dense presets, while instance 1 contains only MoE presets and allows two parallel calls. Open WebUI lists each preset on its configured backend. Context is auto-fit to available VRAM (`fit-target = 256` in each file).
+The files are independent: instance 0 contains the dense presets, while instance 1 contains only MoE presets and allows two parallel calls. Open WebUI lists only the instance-0 presets; instance 1 remains available to Hindsight and direct OpenAI-compatible API clients. Context is auto-fit to available VRAM (`fit-target = 256` in each file).
 
 ### Adding or changing models
 

@@ -7,14 +7,14 @@ This machine runs a local-only Hindsight memory server backed by the Ubuntu Post
 - Hindsight API: `http://127.0.0.1:8888`
 - PostgreSQL: `127.0.0.1:5432` and the local Unix socket
 - LLM: secondary llama.cpp router at `http://127.0.0.1:8081/v1`
-- LLM model: `qwen3.6-35b-a3b`
+- LLM model: `gemma4-26b-a4b`
 - LLM router config: `models-1.ini`, MoE-only, two inference slots
 - Embeddings: `BAAI/bge-m3`, local CPU inference
 - Reranker: `BAAI/bge-reranker-v2-m3`, local CPU inference
 - Database: `hindsight`
 - PostgreSQL role: `gaperton`, authenticated through Unix-socket peer authentication
 
-All service endpoints are bound to localhost. Hindsight does not contain or require a PostgreSQL password.
+Hindsight and PostgreSQL are bound to localhost. The llama.cpp routers are LAN-accessible at `cicero.local`; the secondary router is excluded from Open WebUI and reserved for Hindsight and direct API clients. Hindsight does not contain or require a PostgreSQL password.
 
 ## Installed versions
 
@@ -80,21 +80,18 @@ Do not change the embedding model casually after storing real data.
 Hindsight uses the secondary llama.cpp router so it does not contend with the primary endpoint:
 
 - Endpoint: `http://127.0.0.1:8081/v1`
-- Model: `qwen3.6-35b-a3b`
-- Quantization: `UD-Q5_K_XL`
+- Model: `gemma4-26b-a4b`
+- Quantization: `UD-Q6_K_XL`
 - Hindsight LLM concurrency: 2
 - Router slots: 2, with 131072 tokens per slot when this model is loaded
 - Continuous batching: enabled
 - Timeout: 300 seconds
 - Strict structured schemas: enabled
-- Qwen thinking: disabled with `chat_template_kwargs.enable_thinking=false`
-- Qwen speculative decoding: `draft-mtp`, depth 4 in the current router config
+- Gemma speculative decoding: disabled because every locally tested draft depth reduced generation throughput
 
-Thinking is disabled because reasoning tokens can exhaust Hindsight's bounded structured-output calls before Qwen emits the required result.
+The secondary router also offers `qwen3.6-35b-a3b` at `UD-Q5_K_XL` with `draft-mtp` depth 2. When Qwen is selected, thinking is disabled with `chat_template_kwargs.enable_thinking=false` because reasoning tokens can exhaust Hindsight's bounded structured-output calls before Qwen emits the required result.
 
-The secondary router also offers `gemma4-26b-a4b` at `UD-Q6_K_XL`. Gemma MTP is disabled because every locally tested draft depth reduced generation throughput. Hindsight currently selects Qwen, not Gemma.
-
-The saved Qwen Q5_K_XL benchmark validates MTP depth 2 for generation throughput: 109.51 to 134.10 tokens/s, while prompt throughput fell from 368.73 to 312.94 tokens/s. The active depth-4 setting has passed Hindsight correctness checks but does **not** yet have a matching controlled no-regression benchmark. Do not treat depth 4 as performance-approved until it is compared with depth 2 and no MTP using a representative prompt-heavy Hindsight workload.
+The saved Qwen Q5_K_XL benchmark validates MTP depth 2 for generation throughput: 109.51 to 134.10 tokens/s, while prompt throughput fell from 368.73 to 312.94 tokens/s. The Hindsight comparison below shows that higher raw decode throughput does not guarantee reliable or lower-latency Reflect behavior.
 
 Hindsight's strongest official local recommendation is `gpt-oss-20b`, which is not currently installed as a llama.cpp preset.
 
@@ -200,17 +197,41 @@ Restore into an empty database only after stopping Hindsight. A typical restore 
 
 ## Verified behavior
 
-### Active Qwen MoE installation audit
+### Gemma versus Qwen Hindsight comparison (2026-08-02)
 
-With the configured `qwen3.6-35b-a3b` Q5_K_XL model, strict schemas, thinking disabled, and two router slots, a temporary-bank test passed:
+A controlled operation-level comparison used the same Hindsight configuration, three-item bilingual memory workload, exact access-code checks, strict schemas, CPU embedding and reranking models, two router slots, and the deployed GGUF presets. Each workflow performed Retain, Russian-to-English Recall, Reflect, and consolidation, then deleted its temporary bank. Reflect was placed before explicit consolidation so the operations could be timed independently; Hindsight's automatic consolidation can still overlap them.
 
-| Operation | Result | Latency |
+Gemma 4 26B-A4B Q6_K_XL completed one warm-up and all three measured workflows correctly:
+
+| Operation | Measured runs | Median |
 | --- | --- | ---: |
-| Retain | strict-schema extraction passed | 11.563 s |
-| Recall | Russian query retrieved the English access-code memory | 0.956 s |
-| Reflect | returned the exact access code | 8.691 s |
+| Retain | 7.583 / 7.450 / 7.519 s | 7.519 s |
+| Recall | 0.720 / 0.855 / 0.772 s | 0.772 s |
+| Reflect | 6.428 / 7.051 / 8.077 s | 7.051 s |
+| Consolidation | 5.022 / 5.020 / 4.017 s | 5.020 s |
+| LLM-heavy workflow | 19.033 / 19.521 / 19.613 s | 19.521 s |
+| Complete workflow | 19.760 / 20.382 / 20.392 s | 20.382 s |
 
-The test bank was deleted afterward, and PostgreSQL returned to zero banks and zero memory units. This is focused ad-hoc verification, not a benchmark suite. During the audit the secondary router was started temporarily and stopped afterward; the normal `cicero-home-ai.service` remains responsible for port 8081 during regular operation.
+All three recalls retrieved the exact English access code from the Russian query, all Reflect calls returned the exact code, and all consolidations completed. Across the three measured workflows, llama.cpp handled 27 internal LLM calls, 19,085 evaluated prompt tokens, and 3,418 generated tokens. Weighted throughput was 979.1 prompt tokens/s and 79.8 generated tokens/s; median per-call generation throughput was 72.5 tokens/s. These rates include real two-slot overlap and schema-constrained Hindsight requests rather than an isolated decode benchmark.
+
+Qwen3.6 35B-A3B Q5_K_XL with MTP depth 2 produced one valid warm-up workflow:
+
+| Operation | Valid Qwen reference |
+| --- | ---: |
+| Retain | 8.417 s |
+| Recall | 1.026 s |
+| Reflect | 18.385 s |
+| Consolidation | 1.009 s |
+| LLM-heavy workflow | 27.810 s |
+| Complete workflow | 28.844 s |
+
+Qwen then failed the validity gate twice on the same data: one Reflect after consolidation and one Reflect before consolidation both ran for 300 seconds and returned HTTP 504. The first runaway generated more than 20,000 tokens without terminating. Completed pre-failure calls decoded at about 149.8 tokens/s, but that higher raw rate did not produce a usable result. Only one of three attempted Qwen workflows was valid, so there is no defensible three-run Qwen median.
+
+Gemma's median complete workflow was 29.3% faster than the one valid Qwen reference, while Retain was 10.7% faster and Reflect was 61.6% faster. Do not compare the explicit consolidation values directly: automatic consolidation overlapped the workflow, and Qwen's long Reflect gave it more time to finish in the background before the explicit consolidation poll.
+
+Assessment: Gemma's speed is operationally good for Hindsight on this host. Recall stayed below 1 second, Retain below 8 seconds, Reflect below 9 seconds, and the full workflow was stable around 20 seconds. Gemma is the preferred Hindsight model from this test because it was both faster end to end and reliable. Hindsight now persistently selects `gemma4-26b-a4b`.
+
+The earlier one-memory Qwen smoke test passed Retain in 11.563 seconds, Recall in 0.956 seconds, and Reflect in 8.691 seconds, but it did not expose the richer workflow's runaway Reflect behavior. These are focused ad-hoc integration measurements, not a canonical benchmark suite.
 
 ### Earlier multilingual retrieval matrix
 
