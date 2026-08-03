@@ -444,6 +444,25 @@ Decode is unaffected; prefill is what matters for this prompt-heavy workload. VR
 
 **3. Preset items confirmed correct against upstream guidance:** `--jinja` required for tool calling (set in `[*]`); repetition penalties must be disabled (`repeat-penalty = 1.0`); flash attention recommended (`flash-attn = true`); `ubatch-size 2048` matches the guide's `-ub 2048`. Sampling params stay omitted because Hindsight sends per-operation temperatures.
 
+#### Sampling and temperature
+
+Effective sampling for `gpt-oss-20b`, established by capturing Hindsight's actual HTTP traffic through a logging proxy rather than reading the config:
+
+| Operation | Configured | Actually sent |
+| --- | --- | --- |
+| Retain | `..._TEMPERATURE_RETAIN=0.1` | **0.1** |
+| Reflect | `..._TEMPERATURE_REFLECT=0.2` | **nothing** |
+| Consolidation | `..._TEMPERATURE_CONSOLIDATION=0.0` | **nothing** |
+
+**Only Retain applies its configured temperature.** Reflect and Consolidation send no sampling parameters at all, so they run on llama.cpp's server defaults — temp 0.8, top-k 40, top-p 0.95, min-p 0.05. The two remaining `HINDSIGHT_API_LLM_TEMPERATURE_*` variables are inert for this deployment and should not be trusted to do anything. Hindsight also sends no `top_p`, `top_k` or `min_p` for any operation.
+
+This diverges from gpt-oss's official recommendation (temp 1.0, top-p 1.0, top-k 0), but measurement says it does not matter: on the Reflect tool-call turn, with the custom chat template in place, **40/40 succeeded under all three of** llama.cpp defaults, `temp=0.2`, and `temp=1.0 / top_p=1.0 / top_k=100`. An earlier 16-sample run appeared to show differences (81–94%); that was noise, and the larger sample removed it.
+
+Sampling is therefore left unset in the preset. Two consequences worth knowing:
+
+- Consolidation runs at temp 0.8 although its configured intent is 0.0. That is a determinism question for fact extraction, not a reliability one — nothing failed in testing. If deterministic consolidation is wanted, the **only** working lever is `temp` in the `[gpt-oss-20b]` preset (the env var does nothing); Retain would keep its explicit 0.1.
+- `repeat-penalty = 1.0` is correct and must stay. llama.cpp's gpt-oss guide is explicit that repetition penalties break this model, and clients enable them by default.
+
 #### Open lever: `HINDSIGHT_API_RERANKER_MAX_CANDIDATES`
 
 Hindsight's docs recommend `100` for local deployments (default `300`). Measured on the live `hermes` bank across five varied English and Russian queries:
