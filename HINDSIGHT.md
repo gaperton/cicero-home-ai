@@ -179,10 +179,29 @@ HINDSIGHT_API_RERANKER_LITELLM_MODEL=qwen3-reranker-0.6b
 
 This replaced the local CPU `BAAI/bge-reranker-v2-m3` path, which was the dominant cost in every slow Recall (one call spent 34.7s of its 34.88s total in the `[4] Reranking [cross-encoder]` stage alone).
 
-- Preset: `models-1.ini`, `[qwen3-reranker-0.6b]` — `parallel = 8`, `ctx-size = 32768` (4,096 tokens/slot), `batch-size = 8192`, `ubatch-size = 8192`
+- Preset: `models-1.ini`, `[qwen3-reranker-0.6b]` — `kv-unified = true`, `parallel = 8`, `ctx-size = 32768`, `batch-size = 4096`, `ubatch-size = 4096`
 - Requires `--models-max 2` on the Vulkan1 `llama-server` instance (set explicitly in `run.sh`, overriding `.env`'s global `--models-max 1`) so the LLM and the reranker stay resident simultaneously instead of evicting each other on every call — this is a **startup-only** flag; changing it needs `systemctl --user restart cicero-home-ai.service`, not just a router preset reload
 - `ctx-size` is a **total**, divided across `parallel` slots. Read it per slot: the per-slot figure is the hard ceiling on one query+document pair, and llama.cpp rejects the **entire** rerank request with HTTP 400 `exceed_context_size_error` if any single pair exceeds it — not just the offending document. An earlier `ctx-size = 8192` with `parallel = 8` therefore gave 1,024 tokens per pair; verified live on 2026-08-03 with a three-document batch where one 2,115-token document failed all three. The longest stored `memory_units.text` at that time was 2,490 characters (~700 tokens), plus the `context: ` prefix Hindsight prepends — under the old ceiling, but with almost no headroom.
 - `batch-size`/`ubatch-size` must stay bounded (8192, not higher) and `ubatch-size` must remain **≥ the per-slot context**, since reranking is non-causal and a pair has to fit in a single physical batch. An earlier attempt at 8192 alongside `parallel=8` was fine, but pushing `parallel` to 32 with a proportionally larger `ctx-size` blew the combined footprint over the card and dumped ~30 GiB into GTT, silently degrading the LLM's own throughput (prompt processing dropped from ~200 tok/s to ~134 tok/s) alongside the reranker.
+
+#### Reranker tuning (2026-08-03)
+
+Benchmarked with 100 real `hermes` documents rather than synthetic text, since cost turns out to depend on document length.
+
+| Change | Result |
+| --- | --- |
+| `kv-unified = true` | **31.3 -> 22.0 ms/doc (-29%)** |
+| `parallel` 8 -> 32 | no change (22.0 vs 21.7 ms/doc) |
+| `batch`/`ubatch` 8192 -> 4096 | no change; smaller buffers are free |
+| Truncating documents to 256 tokens | 3% faster, rankings identical |
+
+End-to-end `hermes` Recall: **4.37 s -> 3.14 s**.
+
+Three findings worth keeping:
+
+- **`parallel` is not a throughput lever.** Hindsight sends every candidate in one request and llama.cpp processes them serially — latency is exactly linear in document count from 1 to 300 documents. Eight slots exist only to serve concurrent Recalls, not to speed up one.
+- **`kv-unified` also removes the per-slot cliff.** `n_ctx_slot` becomes the full `ctx-size` instead of `ctx-size / parallel`, so the earlier failure mode — `ctx-size 8192 / parallel 8` silently yielding 1024 tokens per pair — cannot recur. The ceiling on one query+document pair is now `ubatch-size`: verified live, ~3100 tokens passes and ~5175 fails with `input is too large to process. increase the physical batch size`. It still fails the whole request, so `MAX_TOKENS_PER_DOC=3072` must stay below `ubatch-size`.
+- **Cost is driven by document length, not count** — 14 tokens costs 14 ms/doc, 560 tokens costs 442 ms/doc. Real memories average ~80 tokens (p95 140, max ~700), which is why truncation buys nothing here. If the corpus ever gains long documents, `MAX_TOKENS_PER_DOC` becomes a real latency lever rather than just a safety backstop.
 
 **Measured impact**: per-candidate reranking cost dropped from ~788ms (CPU cross-encoder, 44 candidates in 34.7s) to ~48-50ms (GPU reranker) — roughly a 16-20x per-candidate speedup, verified both on a synthetic 150-document benchmark and against live Recall calls. Real end-to-end Recall latency did **not** drop by the same factor, because Hindsight caps reranking at `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` (config default `DEFAULT_RERANKER_MAX_CANDIDATES = 300`, in `memory_engine.py`) — candidates beyond that are pre-filtered by RRF score before the cross-encoder ever sees them, so this ceiling does not grow with bank size. A full 300-candidate Recall against the live `hermes` bank (433 candidates merged, 133 pre-filtered) measured ~14.8-15.1s post-fix, down from 30-70s+ observed pre-fix. Lowering `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` below 300 is the remaining lever if faster Recall is needed, at the cost of trusting RRF's cheaper ranking not to bury a relevant fact outside the reduced top-N.
 
@@ -329,8 +348,8 @@ Production `hermes` bank, three runs, all correct. The benchmark issues only Rec
 
 | Operation | Runs | Median |
 | --- | --- | ---: |
-| Recall | 6.113 / 4.367 / 4.253 s | 4.367 s |
-| Reflect | 24.218 / 24.360 / 21.848 s | 24.218 s |
+| Recall | 2.980 / 3.249 / 2.931 s | 2.980 s |
+| Reflect | 14.035 / 21.877 / 32.949 s | 21.877 s |
 
 For comparison, the same benchmark on the **stock** template, before the fix described below: Reflect 12.553 s median on a disposable bank and 44.143 s on `hermes`, with runs spread 7.9-14.6 s and 24.0-53.8 s respectively. The custom template makes Reflect ~3.5x faster on small banks and ~21% faster on `hermes`, and collapses the variance.
 
