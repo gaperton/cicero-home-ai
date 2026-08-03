@@ -28,8 +28,12 @@ trap 'kill "${PIDS[@]}" 2>/dev/null' EXIT
 PIDS+=("$!")
 
 # shellcheck disable=SC2086
+# --models-max 2 overrides SERVER_FLAGS' --models-max 1: this router keeps both
+# gemma4-26b-a4b and the qwen3-reranker-0.6b reranking model resident at once
+# for Hindsight, instead of evicting one to load the other on every call.
 "$SCRIPT_DIR/llama.cpp/llama-server" \
     $SERVER_FLAGS \
+    --models-max 2 \
     --models-preset "$SCRIPT_DIR/models-1.ini" \
     --device Vulkan1 \
     --port 8081 &

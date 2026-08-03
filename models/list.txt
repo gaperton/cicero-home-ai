@@ -21,4 +21,5 @@ Gemma4-26B-A4B-QAT	unsloth/gemma-4-26B-A4B-it-qat-GGUF	mtp-gemma-4-26B-A4B-it.gg
 Qwen3.6-35B-A3B	unsloth/Qwen3.6-35B-A3B-MTP-GGUF	Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
 Qwen3.6-35B-A3B	unsloth/Qwen3.6-35B-A3B-MTP-GGUF	Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf
 Qwen3.6-35B-A3B	unsloth/Qwen3.6-35B-A3B-MTP-GGUF	Qwen3.6-35B-A3B-UD-Q5_K_S.gguf
+Qwen3-Reranker-0.6B	ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF	qwen3-reranker-0.6b-q8_0.gguf
 
