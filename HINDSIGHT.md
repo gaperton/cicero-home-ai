@@ -105,8 +105,8 @@ Hindsight uses the secondary llama.cpp router so it does not contend with the pr
 - Endpoint: `http://127.0.0.1:8081/v1`
 - Model: `gemma4-26b-a4b`
 - Quantization: `UD-Q6_K_XL`
-- Hindsight LLM concurrency: 4
-- Router slots: 4; `ctx-size = 600000`, with the live router reporting `n_ctx = 150016` per slot
+- Hindsight LLM concurrency: 4 (`HINDSIGHT_API_LLM_MAX_CONCURRENT=4`) — matches the router's 4 slots exactly. The per-operation override vars (`HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `..._REFLECT_...`, `..._CONSOLIDATION_...`) exist in the Hindsight codebase but are unset here, so every LLM call (Retain, Reflect, Consolidation) shares the single global semaphore of 4 — there is no way for Hindsight to oversubscribe Gemma's slots.
+- Router slots: 4; `ctx-size = 524288` (131,072 tokens/slot)
 - Continuous batching: enabled
 - Timeout: 300 seconds
 - Strict structured schemas: enabled
@@ -117,6 +117,25 @@ The secondary router also offers `qwen3.6-35b-a3b` at `UD-Q5_K_XL` with `draft-m
 The saved Qwen Q5_K_XL benchmark validates MTP depth 2 for generation throughput: 109.51 to 134.10 tokens/s, while prompt throughput fell from 368.73 to 312.94 tokens/s. The Hindsight comparison below shows that higher raw decode throughput does not guarantee reliable or lower-latency Reflect behavior.
 
 Hindsight's strongest official local recommendation is `gpt-oss-20b`, which is not currently installed as a llama.cpp preset.
+
+### Reranker (GPU, replaces the CPU cross-encoder)
+
+Hindsight's reranker is `qwen3-reranker-0.6b` (Q8_0 GGUF, `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF`), served from the same Vulkan1 router as Gemma via llama.cpp's `/v1/rerank` endpoint, wired in through Hindsight's `litellm` reranker provider:
+
+```
+HINDSIGHT_API_RERANKER_PROVIDER=litellm
+HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://127.0.0.1:8081/v1
+HINDSIGHT_API_RERANKER_LITELLM_MODEL=qwen3-reranker-0.6b
+```
+
+This replaced the local CPU `BAAI/bge-reranker-v2-m3` path, which was the dominant cost in every slow Recall (one call spent 34.7s of its 34.88s total in the `[4] Reranking [cross-encoder]` stage alone).
+
+- Preset: `models-1.ini`, `[qwen3-reranker-0.6b]` — `parallel = 16`, `ctx-size = 16384` (1,024 tokens/slot), `batch-size = 8192`, `ubatch-size = 8192`
+- Requires `--models-max 2` on the Vulkan1 `llama-server` instance (set explicitly in `run.sh`, overriding `.env`'s global `--models-max 1`) so Gemma and the reranker stay resident simultaneously instead of evicting each other on every call — this is a **startup-only** flag; changing it needs `systemctl --user restart cicero-home-ai.service`, not just a router preset reload
+- VRAM budget with both models loaded: ~29.85 GiB used of 31.86 GiB on Vulkan1 (card0), ~0.15 GiB in GTT (i.e. effectively fully resident, not spilled to system RAM)
+- `batch-size`/`ubatch-size` must stay bounded (8192, not higher) — an earlier attempt at 8192 alongside `parallel=8` was fine, but pushing `parallel` to 32 with a proportionally larger `ctx-size` (32768) blew the combined footprint over the card and dumped ~30 GiB into GTT, silently degrading Gemma's own throughput (prompt processing dropped from ~200 tok/s to ~134 tok/s) alongside the reranker. `parallel=16` was measured as the point of diminishing returns — it matched `parallel=32`'s throughput on a clean synthetic benchmark while still fitting cleanly in VRAM.
+
+**Measured impact**: per-candidate reranking cost dropped from ~788ms (CPU cross-encoder, 44 candidates in 34.7s) to ~48-50ms (GPU reranker) — roughly a 16-20x per-candidate speedup, verified both on a synthetic 150-document benchmark and against live Recall calls. Real end-to-end Recall latency did **not** drop by the same factor, because Hindsight caps reranking at `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` (config default `DEFAULT_RERANKER_MAX_CANDIDATES = 300`, in `memory_engine.py`) — candidates beyond that are pre-filtered by RRF score before the cross-encoder ever sees them, so this ceiling does not grow with bank size. A full 300-candidate Recall against the live `hermes` bank (433 candidates merged, 133 pre-filtered) measured ~14.8-15.1s post-fix, down from 30-70s+ observed pre-fix. Lowering `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` below 300 is the remaining lever if faster Recall is needed, at the cost of trusting RRF's cheaper ranking not to bury a relevant fact outside the reduced top-N.
 
 ## Service management
 
