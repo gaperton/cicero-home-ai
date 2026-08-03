@@ -101,6 +101,8 @@ Persistent Hindsight settings in `/home/gaperton/.config/hindsight/hindsight.env
 HINDSIGHT_API_RERANKER_PROVIDER=litellm
 HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://127.0.0.1:8081/v1
 HINDSIGHT_API_RERANKER_LITELLM_MODEL=qwen3-reranker-0.6b
+HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC=3072
+HINDSIGHT_API_RERANKER_MAX_CANDIDATES=100
 ```
 
 The corresponding `models-1.ini` preset enables `reranking = true`, offloads all layers to Vulkan1, uses eight parallel slots, sets `ctx-size` to 32768, and sets `batch-size` and `ubatch-size` to 8192. The large physical batch is required for real Hindsight candidates: llama.cpp's default 512-token physical batch returned HTTP 500 when a query-document pair exceeded it, and reranking is non-causal so a pair must fit in a single physical batch. `run.sh` overrides the secondary router to `--models-max 2`, allowing `gpt-oss-20b` and `qwen3-reranker-0.6b` to remain loaded together instead of evicting each other on every Recall/LLM transition.
@@ -318,17 +320,17 @@ Run on stock 0.8.6 with verified-good weights and the custom chat template, usin
 
 | Operation | Measured runs | Median |
 | --- | --- | ---: |
-| Retain | 4.272 / 4.218 / 4.145 s | 4.218 s |
-| Recall (disposable bank) | 0.188 / 0.183 / 0.184 s | 0.184 s |
-| Reflect | 4.179 / 3.561 / 3.398 s | 3.561 s |
-| Complete workflow | 8.643 / 7.966 / 7.731 s | 7.966 s |
+| Retain | 3.631 / 4.324 / 4.283 s | 4.283 s |
+| Recall (disposable bank) | 0.237 / 0.375 / 0.191 s | 0.237 s |
+| Reflect | 5.175 / 4.715 / 4.763 s | 4.763 s |
+| Complete workflow | 9.047 / 9.417 / 9.241 s | 9.241 s |
 
 Production `hermes` bank, three runs, all correct. The benchmark issues only Recall and Reflect against it and stores nothing (verified: no benchmark content appears in `hermes`), but note that `hermes` is a live bank other clients write to concurrently -- it grew 477 -> 502 facts during this session -- so its figures carry more noise than the disposable-bank ones and are not exactly reproducible:
 
 | Operation | Runs | Median |
 | --- | --- | ---: |
-| Recall | 13.122 / 13.207 / 13.606 s | 13.207 s |
-| Reflect | 34.734 / 35.130 / 34.266 s | 34.734 s |
+| Recall | 6.113 / 4.367 / 4.253 s | 4.367 s |
+| Reflect | 24.218 / 24.360 / 21.848 s | 24.218 s |
 
 For comparison, the same benchmark on the **stock** template, before the fix described below: Reflect 12.553 s median on a disposable bank and 44.143 s on `hermes`, with runs spread 7.9-14.6 s and 24.0-53.8 s respectively. The custom template makes Reflect ~3.5x faster on small banks and ~21% faster on `hermes`, and collapses the variance.
 
@@ -458,12 +460,13 @@ Effective sampling for `gpt-oss-20b`, established by capturing Hindsight's actua
 
 This diverges from gpt-oss's official recommendation (temp 1.0, top-p 1.0, top-k 0), but measurement says it does not matter: on the Reflect tool-call turn, with the custom chat template in place, **40/40 succeeded under all three of** llama.cpp defaults, `temp=0.2`, and `temp=1.0 / top_p=1.0 / top_k=100`. An earlier 16-sample run appeared to show differences (81–94%); that was noise, and the larger sample removed it.
 
-Sampling is therefore left unset in the preset. Two consequences worth knowing:
+`top_p`/`top_k`/`min_p` are therefore left at llama.cpp defaults. `temp = 0.2` **is** set in the preset, because it is the only working control for Reflect and Consolidation:
 
-- Consolidation runs at temp 0.8 although its configured intent is 0.0. That is a determinism question for fact extraction, not a reliability one — nothing failed in testing. If deterministic consolidation is wanted, the **only** working lever is `temp` in the `[gpt-oss-20b]` preset (the env var does nothing); Retain would keep its explicit 0.1.
+- Without it Consolidation runs at 0.8 although its configured intent is 0.0, so the same memories could consolidate differently run to run. The env var cannot fix this; the preset can. Retain still overrides with its own 0.1.
+- 0.2 rather than 0.0 because greedy decoding is the classic repetition-loop trigger on this model.
 - `repeat-penalty = 1.0` is correct and must stay. llama.cpp's gpt-oss guide is explicit that repetition penalties break this model, and clients enable them by default.
 
-#### Open lever: `HINDSIGHT_API_RERANKER_MAX_CANDIDATES`
+#### Applied: `HINDSIGHT_API_RERANKER_MAX_CANDIDATES=100`
 
 Hindsight's docs recommend `100` for local deployments (default `300`). Measured on the live `hermes` bank across five varied English and Russian queries:
 
@@ -477,7 +480,7 @@ Hindsight's docs recommend `100` for local deployments (default `300`). Measured
 
 Recall is ~3x faster and the head of the ranking is nearly unchanged — top-3 identical in four of five queries — but it is **not free**: up to 11% fewer facts are returned and one query's top-3 reordered. Facts that RRF ranks below 100 can no longer be rescued by the cross-encoder.
 
-**Left at the default 300.** Switching to 100 is defensible and is upstream's own advice, but it trades retrieval breadth for latency and that is a judgement call about this corpus, not a pure win.
+**Set to 100.** The tail it discards is largely the historical and superseded material this corpus is already known to carry, and Recall is the most frequently exercised operation. Reflect benefits too, because its tool calls invoke Recall internally: `hermes` Recall 13.207 s -> 4.367 s and Reflect 34.734 s -> 24.218 s. Raise it back to 300 if a lookup is ever found to miss a fact that RRF ranked below 100.
 
 Also noted but not changed: Hindsight's docs suggest `HINDSIGHT_API_LLM_MAX_CONCURRENT=2` for local use and "leave at least one slot free per shared client". This deployment runs 3 against `parallel = 3`, so Hindsight can saturate the router. That is deliberate, but `:8081` does serve other clients, and a concurrent writer was observed during benchmarking — if the Hermes agent starts contending for slots, drop this to 2.
 
