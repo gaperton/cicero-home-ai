@@ -22,4 +22,5 @@ Qwen3.6-35B-A3B	unsloth/Qwen3.6-35B-A3B-MTP-GGUF	Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
 Qwen3.6-35B-A3B	unsloth/Qwen3.6-35B-A3B-MTP-GGUF	Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf
 Qwen3.6-35B-A3B	unsloth/Qwen3.6-35B-A3B-MTP-GGUF	Qwen3.6-35B-A3B-UD-Q5_K_S.gguf
 Qwen3-Reranker-0.6B	ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF	qwen3-reranker-0.6b-q8_0.gguf
+GPT-OSS-20B	unsloth/gpt-oss-20b-GGUF	gpt-oss-20b-UD-Q8_K_XL.gguf
 

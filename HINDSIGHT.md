@@ -7,8 +7,8 @@ This machine runs a LAN-accessible Hindsight memory server backed by the localho
 - Hindsight API: `http://cicero.local:8888` on the trusted LAN; `http://127.0.0.1:8888` locally
 - PostgreSQL: `127.0.0.1:5432` and the local Unix socket
 - LLM: secondary llama.cpp router at `http://127.0.0.1:8081/v1`
-- LLM model: `gemma4-26b-a4b`
-- LLM router config: `models-1.ini`; the secondary router allows two resident models so Gemma and the reranker can coexist
+- LLM model: `gpt-oss-20b`
+- LLM router config: `models-1.ini`; the secondary router allows two resident models so the LLM and the reranker can coexist
 - Embeddings: `BAAI/bge-m3`, local CPU inference
 - Reranker: `qwen3-reranker-0.6b`, Q8_0 GGUF on Vulkan1 through llama.cpp's `/v1/rerank` endpoint
 - Database: `hindsight`
@@ -31,13 +31,44 @@ Verified on 2026-08-02:
 
 The 2026-08-02 installation audit also verified that the Hindsight and PostgreSQL services are enabled and active, the OpenAPI document exposes 57 paths, and no warning-or-higher journal entries occurred after the current Hindsight activation.
 
-### Local Reflect safety patch
+### No local patches — stock 0.8.6
 
-Hindsight 0.8.6 leaves intermediate Reflect `call_with_tools` requests without an output-token limit. It also discards the OpenAI-compatible `reasoning_content` returned with a Gemma tool call instead of replaying it in the next assistant tool-call message, even though Gemma 4's chat template requires that history. The missing history can make follow-up turns malformed; independently, the missing token ceiling allowed one malformed call to generate more than 60,000 tokens, exceed Hindsight's 300-second wall timeout, and continue occupying a llama.cpp slot after the HTTP request had failed.
+**This installation runs unmodified Hindsight 0.8.6**, verified end to end on 2026-08-03: Recall 15.06 s (63 memories), Reflect 55.11 s returning the correct answer, with no patches applied. Keep it that way: a `pip install -U` silently reverts any local edit to `site-packages`, and there is no CI here to catch the drift.
 
-The installed package is patched to cap Reflect tool-call completions at 4,096 tokens while preserving smaller caller-provided limits, and to preserve/replay `reasoning_content` across OpenAI-compatible tool turns. The reproducible patch is stored at `patches/hindsight-0.8.6-reflect-tool-cap.patch`; its regression test is `/home/gaperton/.local/share/hindsight/tests/test_reflect_tool_cap.py`. A Hindsight package upgrade may overwrite the installed patch. Re-check upstream behavior and either remove the local patch when fixed upstream or reapply it from the `site-packages` directory before restarting the service.
+Two local patches existed and were both removed on 2026-08-03:
 
-The `reasoning_content` change was verified against the live llama.cpp response and with five repeated two-iteration Reflect workflows. All five returned the correct database and role in 55.676–68.890 seconds (median 55.931 seconds), but one workflow still needed a bounded retry after a `peg-gemma4` HTTP 500. Preserving the history is therefore a protocol-correctness fix, not a complete cure for Gemma's parser/generation failures; retain the token cap.
+- **Reflect tool-call token cap.** Capped intermediate `call_with_tools` requests (4,096, later 1,024 tokens). Written for Gemma, whose `peg-gemma4` tool-call path could generate 60,000+ tokens, exceed the 300-second wall timeout, and keep occupying a llama.cpp slot after the HTTP request had failed. Removed because it truncates a tool call into a malformed one rather than raising, and because the cap counts gpt-oss's reasoning tokens too.
+- **`reasoning_content` replay.** Preserved the model's own analysis across assistant tool-call turns. Not required: llama.cpp maps `reasoning_content` onto the gpt-oss template's `thinking` field (`common_chat_params_init_gpt_oss` in `common/chat.cpp`), and the harmony template renders it only under `{%- elif message.thinking and not future_final_message.found %}`. When the field is absent that branch simply does not fire — the prompt stays valid and nothing raises. The patch bought protocol fidelity (harmony is designed around the model seeing its own intra-turn analysis), never correctness, and the benefit was never measured against gpt-oss.
+
+Note that one hazard is real but handled upstream: the harmony template raises if an assistant message with tool calls carries *both* `content` and `thinking`. llama.cpp erases `content` in that case, so it cannot be tripped from Hindsight.
+
+If a future model genuinely needs either behavior, re-derive the patch rather than restoring these — both were written against Gemma-era failure modes that no longer describe this deployment.
+
+### Corrupt GGUF incident, 2026-08-03
+
+The `gpt-oss-20b-UD-Q8_K_XL.gguf` download was silently corrupt: **the file size matched HuggingFace's to the byte** (13,195,442,368) while its sha256 did not (`91d8d123…fc981` on disk vs `b97fa9f3…ec239` published). Nothing detected it, because `hf download` skips any file whose recorded metadata matches and never re-hashes the bytes.
+
+Symptoms, all downstream of the bad weights and all misleading:
+
+- Reflect generated 29,370+ tokens and never terminated, exactly mimicking the Gemma runaway the removed token cap was written for
+- `/v1/chat/completions` returned HTTP 500 `The model produced output that does not match the expected peg-native format` — even for "What is 2+2?"
+- Hindsight's 512-token startup connection check failed with `finish_reason=length`, empty content
+
+The diagnostic that cut through it was raw `/completion`, which bypasses the chat template and the PEG parser: the model answered `" Paris."` correctly and then collapsed into `tradem tradem tradem…`. That localises the fault to generation itself, ruling out Hindsight, the tool protocol, and the parser in one step. Quantized KV cache, `batch-size`/`ubatch-size`, and sampling parameters were each independently excluded — including gpt-oss's official `temp 1.0 / top_p 1.0 / top_k 0`, which degenerated identically.
+
+After re-downloading, the same captured `reflect_tool_call` payload that had run to 29,370 tokens returned a correct tool call in **52 tokens / 2.7 s**.
+
+**Verify the hash after any model download.** Size and a successful load prove nothing:
+
+```bash
+sha256sum models/GPT-OSS-20B/gpt-oss-20b-UD-Q8_K_XL.gguf
+curl -fsS "https://huggingface.co/api/models/unsloth/gpt-oss-20b-GGUF/tree/main?recursive=1" \
+  | python3 -c "import json,sys; [print(f['path'], f.get('size'), (f.get('lfs') or {}).get('oid')) for f in json.load(sys.stdin) if f['path'].endswith('.gguf')]"
+```
+
+To force a re-download, delete both the file and `.cache/huggingface/download/<file>.metadata` — deleting the file alone is not always enough.
+
+One llama.cpp behavior seen here is real and independent of the corruption: **a non-streaming client disconnecting does not stop generation.** The abandoned Reflect kept decoding to 30k tokens holding a slot. Streaming clients do abort. This is the standing argument for bounding pathological generations somewhere, if one ever recurs on healthy weights.
 
 ## Files and data
 
@@ -72,7 +103,9 @@ HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://127.0.0.1:8081/v1
 HINDSIGHT_API_RERANKER_LITELLM_MODEL=qwen3-reranker-0.6b
 ```
 
-The corresponding `models-1.ini` preset enables `reranking = true`, offloads all layers to Vulkan1, uses eight parallel slots, and sets `ctx-size`, `batch-size`, and `ubatch-size` to 8192. The 8192 physical batch is required for real Hindsight candidates: llama.cpp's default 512-token physical batch returned HTTP 500 when a query-document pair exceeded it. `run.sh` overrides the secondary router to `--models-max 2`, allowing `gemma4-26b-a4b` and `qwen3-reranker-0.6b` to remain loaded together instead of evicting each other on every Recall/LLM transition.
+The corresponding `models-1.ini` preset enables `reranking = true`, offloads all layers to Vulkan1, uses eight parallel slots, sets `ctx-size` to 32768, and sets `batch-size` and `ubatch-size` to 8192. The large physical batch is required for real Hindsight candidates: llama.cpp's default 512-token physical batch returned HTTP 500 when a query-document pair exceeded it, and reranking is non-causal so a pair must fit in a single physical batch. `run.sh` overrides the secondary router to `--models-max 2`, allowing `gpt-oss-20b` and `qwen3-reranker-0.6b` to remain loaded together instead of evicting each other on every Recall/LLM transition.
+
+`HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC=3072` is a second, client-side guard on the same limit. Hindsight sends every candidate in one request and calls `raise_for_status()`, so a single overlong document would fail the whole Recall's reranking; this truncates it instead. Keep it below the per-slot context to leave room for the query and chat template.
 
 The previous CPU fallback was `BAAI/bge-reranker-v2-m3`, configured with the `local` provider, forced CPU execution, FP16 disabled, length-bucket batching, and maximum concurrency 2. To roll back, replace the three active LiteLLM variables above with the following values, restart `hindsight.service`, and confirm the effective process environment and a live Recall:
 
@@ -103,24 +136,38 @@ Do not change the embedding model casually after storing real data.
 Hindsight uses the secondary llama.cpp router so it does not contend with the primary endpoint:
 
 - Endpoint: `http://127.0.0.1:8081/v1`
-- Model: `gemma4-26b-a4b`
-- Quantization: `UD-Q6_K_XL`
-- Hindsight LLM concurrency: 4 (`HINDSIGHT_API_LLM_MAX_CONCURRENT=4`) — matches the router's 4 slots exactly. The per-operation override vars (`HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `..._REFLECT_...`, `..._CONSOLIDATION_...`) exist in the Hindsight codebase but are unset here, so every LLM call (Retain, Reflect, Consolidation) shares the single global semaphore of 4 — there is no way for Hindsight to oversubscribe Gemma's slots.
-- Router slots: 4; `ctx-size = 524288` (131,072 tokens/slot)
+- Model: `gpt-oss-20b` — Hindsight's own strongest official local recommendation. It replaced `gemma4-26b-a4b`, whose `peg-gemma4` tool-call path hits the unfixed llama.cpp #21375 runaway-generation loop.
+- Quantization: `UD-Q8_K_XL`
+- Hindsight LLM concurrency: 3 (`HINDSIGHT_API_LLM_MAX_CONCURRENT=3`) — matches the router's 3 slots exactly. The per-operation override vars (`HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `..._REFLECT_...`, `..._CONSOLIDATION_...`) exist in the Hindsight codebase but are unset here, so every LLM call (Retain, Reflect, Consolidation) shares the single global semaphore of 3 — there is no way for Hindsight to oversubscribe the slots.
+- Router slots: 3; `ctx-size = 300000` (100,000 tokens/slot)
+- Output bounding: `HINDSIGHT_API_LLM_EXTRA_BODY='{"chat_template_kwargs":{"reasoning_effort":"low"}}'`. This is gpt-oss's native mechanism and replaces the removed Reflect token cap. `enable_thinking` is a Gemma/Qwen flag and is a no-op for gpt-oss.
 - Continuous batching: enabled
 - Timeout: 300 seconds
 - Strict structured schemas: enabled
-- Gemma speculative decoding: disabled because every locally tested draft depth reduced generation throughput
+- Speculative decoding: disabled because every locally tested draft depth reduced generation throughput
 
-The secondary router also offers `qwen3.6-35b-a3b` at `UD-Q5_K_XL` with `draft-mtp` depth 2. When Qwen is selected, thinking is disabled with `chat_template_kwargs.enable_thinking=false` because reasoning tokens can exhaust Hindsight's bounded structured-output calls before Qwen emits the required result.
+### Prefill dominates the LLM cost
 
-The saved Qwen Q5_K_XL benchmark validates MTP depth 2 for generation throughput: 109.51 to 134.10 tokens/s, while prompt throughput fell from 368.73 to 312.94 tokens/s. The Hindsight comparison below shows that higher raw decode throughput does not guarantee reliable or lower-latency Reflect behavior.
+Hindsight's llama.cpp traffic is almost entirely prompt evaluation. Measured on the live server (2026-08-03):
 
-Hindsight's strongest official local recommendation is `gpt-oss-20b`, which is not currently installed as a llama.cpp preset.
+| Prompt tokens | Prompt eval | Generated |
+| ---: | ---: | ---: |
+| 24,317 | 9.71 s @ 2,505 tok/s | 251 tokens @ 132 tok/s |
+| 23,547 | 9.18 s @ 2,565 tok/s | — |
+| 14,398 | 5.28 s @ 2,725 tok/s | 110 tokens @ 132 tok/s |
+| 2,146 | 0.66 s @ 3,245 tok/s | 53 tokens @ 148 tok/s |
+
+Roughly 90% of a typical Retain or Consolidation call is prompt processing, so prefill throughput — not decode throughput — is the lever for Hindsight latency. The preset therefore sets `batch-size = 4096` and `ubatch-size = 2048` instead of llama.cpp's 2048/512 defaults.
+
+llama.cpp's slot prefix cache does work where it can (`f_sim_best = 1.000` produces 1-token prompt evals on repeated prefixes), but Retain and Consolidation prompts carry distinct content each call and are fully reprocessed.
+
+The secondary router previously also offered `gemma4-26b-a4b` and `qwen3.6-35b-a3b`; both were removed from `models-1.ini`. With `--models-max 2` any client requesting a third model on :8081 would evict `gpt-oss-20b` or the reranker mid-workload.
+
+The saved Qwen Q5_K_XL benchmark validated MTP depth 2 for generation throughput: 109.51 to 134.10 tokens/s, while prompt throughput fell from 368.73 to 312.94 tokens/s. The Gemma/Qwen comparison below shows that higher raw decode throughput does not guarantee reliable or lower-latency Reflect behavior.
 
 ### Reranker (GPU, replaces the CPU cross-encoder)
 
-Hindsight's reranker is `qwen3-reranker-0.6b` (Q8_0 GGUF, `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF`), served from the same Vulkan1 router as Gemma via llama.cpp's `/v1/rerank` endpoint, wired in through Hindsight's `litellm` reranker provider:
+Hindsight's reranker is `qwen3-reranker-0.6b` (Q8_0 GGUF, `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF`), served from the same Vulkan1 router as the LLM via llama.cpp's `/v1/rerank` endpoint, wired in through Hindsight's `litellm` reranker provider:
 
 ```
 HINDSIGHT_API_RERANKER_PROVIDER=litellm
@@ -130,10 +177,10 @@ HINDSIGHT_API_RERANKER_LITELLM_MODEL=qwen3-reranker-0.6b
 
 This replaced the local CPU `BAAI/bge-reranker-v2-m3` path, which was the dominant cost in every slow Recall (one call spent 34.7s of its 34.88s total in the `[4] Reranking [cross-encoder]` stage alone).
 
-- Preset: `models-1.ini`, `[qwen3-reranker-0.6b]` — `parallel = 16`, `ctx-size = 16384` (1,024 tokens/slot), `batch-size = 8192`, `ubatch-size = 8192`
-- Requires `--models-max 2` on the Vulkan1 `llama-server` instance (set explicitly in `run.sh`, overriding `.env`'s global `--models-max 1`) so Gemma and the reranker stay resident simultaneously instead of evicting each other on every call — this is a **startup-only** flag; changing it needs `systemctl --user restart cicero-home-ai.service`, not just a router preset reload
-- VRAM budget with both models loaded: ~29.85 GiB used of 31.86 GiB on Vulkan1 (card0), ~0.15 GiB in GTT (i.e. effectively fully resident, not spilled to system RAM)
-- `batch-size`/`ubatch-size` must stay bounded (8192, not higher) — an earlier attempt at 8192 alongside `parallel=8` was fine, but pushing `parallel` to 32 with a proportionally larger `ctx-size` (32768) blew the combined footprint over the card and dumped ~30 GiB into GTT, silently degrading Gemma's own throughput (prompt processing dropped from ~200 tok/s to ~134 tok/s) alongside the reranker. `parallel=16` was measured as the point of diminishing returns — it matched `parallel=32`'s throughput on a clean synthetic benchmark while still fitting cleanly in VRAM.
+- Preset: `models-1.ini`, `[qwen3-reranker-0.6b]` — `parallel = 8`, `ctx-size = 32768` (4,096 tokens/slot), `batch-size = 8192`, `ubatch-size = 8192`
+- Requires `--models-max 2` on the Vulkan1 `llama-server` instance (set explicitly in `run.sh`, overriding `.env`'s global `--models-max 1`) so the LLM and the reranker stay resident simultaneously instead of evicting each other on every call — this is a **startup-only** flag; changing it needs `systemctl --user restart cicero-home-ai.service`, not just a router preset reload
+- `ctx-size` is a **total**, divided across `parallel` slots. Read it per slot: the per-slot figure is the hard ceiling on one query+document pair, and llama.cpp rejects the **entire** rerank request with HTTP 400 `exceed_context_size_error` if any single pair exceeds it — not just the offending document. An earlier `ctx-size = 8192` with `parallel = 8` therefore gave 1,024 tokens per pair; verified live on 2026-08-03 with a three-document batch where one 2,115-token document failed all three. The longest stored `memory_units.text` at that time was 2,490 characters (~700 tokens), plus the `context: ` prefix Hindsight prepends — under the old ceiling, but with almost no headroom.
+- `batch-size`/`ubatch-size` must stay bounded (8192, not higher) and `ubatch-size` must remain **≥ the per-slot context**, since reranking is non-causal and a pair has to fit in a single physical batch. An earlier attempt at 8192 alongside `parallel=8` was fine, but pushing `parallel` to 32 with a proportionally larger `ctx-size` blew the combined footprint over the card and dumped ~30 GiB into GTT, silently degrading the LLM's own throughput (prompt processing dropped from ~200 tok/s to ~134 tok/s) alongside the reranker.
 
 **Measured impact**: per-candidate reranking cost dropped from ~788ms (CPU cross-encoder, 44 candidates in 34.7s) to ~48-50ms (GPU reranker) — roughly a 16-20x per-candidate speedup, verified both on a synthetic 150-document benchmark and against live Recall calls. Real end-to-end Recall latency did **not** drop by the same factor, because Hindsight caps reranking at `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` (config default `DEFAULT_RERANKER_MAX_CANDIDATES = 300`, in `memory_engine.py`) — candidates beyond that are pre-filtered by RRF score before the cross-encoder ever sees them, so this ceiling does not grow with bank size. A full 300-candidate Recall against the live `hermes` bank (433 candidates merged, 133 pre-filtered) measured ~14.8-15.1s post-fix, down from 30-70s+ observed pre-fix. Lowering `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` below 300 is the remaining lever if faster Recall is needed, at the cost of trusting RRF's cheaper ranking not to bury a relevant fact outside the reduced top-N.
 
