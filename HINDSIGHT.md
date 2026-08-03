@@ -33,7 +33,7 @@ The 2026-08-02 installation audit also verified that the Hindsight and PostgreSQ
 
 ### No local patches — stock 0.8.6
 
-**This installation runs unmodified Hindsight 0.8.6**, verified end to end on 2026-08-03: Recall 15.06 s (63 memories), Reflect 55.11 s returning the correct answer, with no patches applied. Keep it that way: a `pip install -U` silently reverts any local edit to `site-packages`, and there is no CI here to catch the drift.
+**This installation runs unmodified Hindsight 0.8.6**, verified end to end on 2026-08-03 with no patches applied; see the operation benchmark below for current figures. Keep it that way: a `pip install -U` silently reverts any local edit to `site-packages`, and there is no CI here to catch the drift.
 
 Two local patches existed and were both removed on 2026-08-03:
 
@@ -311,6 +311,121 @@ curl -fsS http://127.0.0.1:8081/v1/rerank \
   -H 'Content-Type: application/json' \
   -d '{"model":"qwen3-reranker-0.6b","query":"GPU model","top_n":2,"documents":["AMD Radeon AI PRO R9700","PostgreSQL database"]}'
 ```
+
+### gpt-oss-20b operation benchmark (2026-08-03)
+
+Run on stock 0.8.6 with verified-good weights and the custom chat template, using the same methodology as the Gemma/Qwen comparison below: bilingual three-item workload with an exact access code, one warm-up plus three measured workflows, each on its own disposable bank, deleted afterwards. A workflow counts only if Recall retrieves the code from a Russian query and Reflect states it. All measured workflows were valid.
+
+| Operation | Measured runs | Median |
+| --- | --- | ---: |
+| Retain | 4.272 / 4.218 / 4.145 s | 4.218 s |
+| Recall (disposable bank) | 0.188 / 0.183 / 0.184 s | 0.184 s |
+| Reflect | 4.179 / 3.561 / 3.398 s | 3.561 s |
+| Complete workflow | 8.643 / 7.966 / 7.731 s | 7.966 s |
+
+Production `hermes` bank, three runs, all correct. The benchmark issues only Recall and Reflect against it and stores nothing (verified: no benchmark content appears in `hermes`), but note that `hermes` is a live bank other clients write to concurrently -- it grew 477 -> 502 facts during this session -- so its figures carry more noise than the disposable-bank ones and are not exactly reproducible:
+
+| Operation | Runs | Median |
+| --- | --- | ---: |
+| Recall | 13.122 / 13.207 / 13.606 s | 13.207 s |
+| Reflect | 34.734 / 35.130 / 34.266 s | 34.734 s |
+
+For comparison, the same benchmark on the **stock** template, before the fix described below: Reflect 12.553 s median on a disposable bank and 44.143 s on `hermes`, with runs spread 7.9-14.6 s and 24.0-53.8 s respectively. The custom template makes Reflect ~3.5x faster on small banks and ~21% faster on `hermes`, and collapses the variance.
+
+A note on the harness: the validity gate originally compared the access code as a plain ASCII substring, and gpt-oss renders it with a non-breaking hyphen (`ORION-7741`, U+2011). That marked correct answers INVALID and silently reduced the sample to a single run. `benchmark/bench-hindsight.py` now NFKC-normalises and folds typographic dashes and spaces before comparing. Any future check against model output should do the same.
+
+Two measurement caveats, both of which invalidate naive readings:
+
+- **The explicit `POST /consolidate` call is not a measurement.** It returned in 0.004 s because automatic consolidation is queued during Retain and had already run. Real consolidation cost must be read from the journal (`CONSOLIDATION COMPLETE`): 8.158 / 6.413 / 6.015 s for these workflows, at ~1.8–2.4 s per memory. Do not compare the 0.004 s figure to the Gemma table's 5.020 s.
+- **The disposable-bank Recall figure (0.214 s) is not representative.** Three memories never reach the reranker's 300-candidate budget. The `hermes` figure of 13.380 s is the real one, and it is dominated by reranking, exactly as recorded in the GPU reranker section.
+
+**Reflect latency is dominated by parse-retry, not by decode.** See below.
+
+### Residual issue: intermittent `peg-native` parse failures
+
+During the benchmark above, 26 requests failed with HTTP 500 `The model produced output that does not match the expected peg-native format` on **verified-good weights**. Distribution by scope:
+
+| Scope | Failed attempts |
+| --- | ---: |
+| `reflect_tool_call` | 14 (attempt 1/4 ×5, 2/4 ×5, 3/4 ×4) |
+| `verification` (startup check) | 2 |
+
+Hindsight retries these, and every retry eventually succeeded — no workflow produced a wrong answer. The cost is latency and variance: `hermes` Reflect ranged 24.027 s (clean) to 53.781 s (retried), and the disposable-bank Reflect spread 7.918–14.649 s on identical input. The median Reflect figures above therefore include a retry tax rather than measuring generation speed.
+
+This is distinct from the corrupt-GGUF incident, where *every* request failed this way including `"What is 2+2?"`.
+
+**Root cause (investigated 2026-08-03).** Only one turn shape fails, and it fails reproducibly:
+
+| Reflect turn | `tool_choice` | Tools | Result |
+| --- | --- | ---: | --- |
+| 1–3 (initial tool selection) | `required` | 1 | 200, always — 20/20 on replay |
+| 4+ (after tool results accumulate) | *omitted* → auto | 4 | 500, ~92% of the time |
+
+The model emits a malformed harmony channel header, conflating the `final` channel with a `commentary to=functions.done` tool call and duplicating `<|constrain|>`. Captured raw from `/completion` (which bypasses the parser), four consecutive generations on the same failing prompt:
+
+```
+<|channel|>final <|constrain|>commentary to=functions.done<|constrain|><|constrain|>json<|message|>{...}
+<|channel|>commentary to=functions.done <|constrain|>json<|message|>{...}      <- the one valid form
+<|channel|>final <|constrain|>answer<|message|>...
+<|channel|>final <|constrain|>commentary to=functions.done<|constrain|>json<|message|>{...}
+```
+
+Why only the later turns: `common/chat.cpp` sets
+
+```cpp
+data.grammar_lazy = !(has_response_format || (has_tools && inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED));
+```
+
+`tool_choice=required` produces an **eager** grammar that constrains generation from the first token, so a malformed header is impossible. `auto` produces a **lazy** grammar that engages only once a trigger matches — and the hybrid header matches no trigger, so generation runs unconstrained and the PEG parser then rejects it. llama.cpp already carries a `stray_commentary` workaround for a neighbouring gpt-oss header quirk; this is the same family of defect, not yet covered.
+
+**It is not tunable from configuration.** Measured success rate on the failing turn (n=12 each) and end-to-end Reflect median on `hermes` (n=3):
+
+| Setting | Turn success | Reflect median |
+| --- | ---: | ---: |
+| `reasoning_effort=low` (current) | 8.3% | **44.14 s** |
+| `reasoning_effort=medium` | 33.3% | 59.19 s |
+| `reasoning_effort=high` | 50.0% | 104.64 s |
+| `temp=1.0 top_p=1.0 top_k=0` | 25.0% | not measured |
+| `temp=0.0` | 0.0% | not measured |
+| `tool_choice=required` | 100.0% | not reachable from config |
+
+Raising `reasoning_effort` genuinely reduces the failure rate but is **net worse end to end**: the extra reasoning tokens cost more than the retries they avoid. `low` is optimal despite having the worst per-call success rate. Keep it.
+
+Correctness is not affected — every configuration answered correctly 3/3, because Hindsight retries and, if all four attempts fail, falls back to a plain no-tool call. That fallback did fire in testing: one Reflect exhausted its retries and produced its answer outside the tool loop.
+
+### Fix: custom chat template (2026-08-03)
+
+Sampling and reasoning effort cannot fix this, but the **prompt** can. Appending an explicit channel instruction to the system header takes the failing turn from 8.3% to 100% (12/12) in isolation, so the fix is delivered as a chat-template override — a server-side config change, not a Hindsight patch.
+
+`templates/gpt-oss-20b-harmony.jinja` is the model's own template, extracted from the GGUF, with one line added inside the existing `{%- if tools -%}` block so it is emitted **only when tools are present**:
+
+```jinja
+{{- "\nCalls to these tools must go to the commentary channel: 'functions'." }}
+{{- "\nYou must always respond by calling a tool. To give your answer, call the 'done' tool. Never answer directly and never emit the 'final' channel while tools are available." }}
+```
+
+Wired in through `chat-template-file` in the `[gpt-oss-20b]` preset. Measured effect:
+
+| Metric | Stock template | Custom template |
+| --- | ---: | ---: |
+| Failing-turn success (n=20) | 8.3% | **95.0%** |
+| Reflect median, `hermes` | 44.14 s | **35.09 s** |
+| Reflect spread | 24.0–53.8 s | 34.5–39.3 s |
+| `peg-native` 500s per 4 Reflects | ~12 | **0** |
+
+Reflect is 20% faster and, more usefully, its variance nearly disappears — the spread was almost entirely retry noise. Answers stayed correct throughout.
+
+**Maintenance:** the template is a copy of the model's own, so it must be re-extracted and re-patched after a model update, or it will silently drift from what the weights expect. Extract with:
+
+```bash
+cd llama.cpp && PYTHONPATH=gguf-py python3 -c "
+from gguf import GGUFReader
+r = GGUFReader('../models/GPT-OSS-20B/gpt-oss-20b-UD-Q8_K_XL.gguf')
+f = next(x for x in r.fields.values() if 'chat_template' in x.name)
+print(bytes(f.parts[f.data[0]]).decode())"
+```
+
+This is a workaround, not a cure. The upstream fixes remain: extend the gpt-oss PEG grammar to accept the hybrid header, or widen the lazy-grammar triggers to cover `<|channel|>final`. Sending `tool_choice=required` on later turns would also fix it but requires patching Hindsight, which this deployment deliberately does not do.
 
 ### Gemma versus Qwen Hindsight comparison (2026-08-02)
 
