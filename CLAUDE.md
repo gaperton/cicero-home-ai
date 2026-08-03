@@ -10,7 +10,7 @@ A home AI server setup — not a software project with a build system or tests. 
 
 Two `llama-server` instances, built from a single Vulkan `llama.cpp/` checkout at the repo root, each pinned to one GPU (`--device Vulkan0` / `Vulkan1`, no layer-split — per-GPU throughput beats `split-mode=layer` across both cards). Instance A listens on port 8080 (GPU0), instance B on port 8081 (GPU1). `run.sh` starts Open WebUI, then launches both `llama-server` processes directly.
 
-**llama-server** runs in **router mode** — a built-in multi-model proxy, one router per GPU. Each instance loads only one model in VRAM at a time (`--models-max 1`, LRU eviction), so up to two different models can be resident simultaneously, one per GPU.
+**llama-server** runs in **router mode** — a built-in multi-model proxy, one router per GPU. The primary instance inherits `--models-max 1` from `.env`; `run.sh` overrides the secondary instance to `--models-max 2` so `gemma4-26b-a4b` and `qwen3-reranker-0.6b` remain resident together for Hindsight.
 
 **Layout:**
 - `.env` — Vulkan cmake flags and `SERVER_FLAGS`
@@ -30,4 +30,5 @@ Two `llama-server` instances, built from a single Vulkan `llama.cpp/` checkout a
 - Agent-facing model presets (used by Claude Code, Cursor, etc.) should **not** include sampling params — agents send their own and override server defaults anyway.
 - Models are sized for TTY mode (no desktop). Max context fits in 32GB VRAM per GPU only without a running desktop session.
 - Model presets in each `models-*.ini` file must fit a single 32GB card — no `split-mode=layer`, since each instance only sees one GPU.
-- `models-1.ini` is the MoE-only secondary router and uses `parallel = 2`; MTP stays disabled there unless end-to-end benchmarks prove it is not slower for the prompt-heavy workload.
+- `models-1.ini` is the Hindsight-oriented secondary router: Gemma uses four slots and 600000 total context, while `qwen3-reranker-0.6b` uses eight slots with 8192 context/batch/ubatch and `reranking = true`. Hindsight connects directly through its `litellm` reranker provider to llama.cpp's `/v1/rerank`; no adapter is needed.
+- Preserve `--models-max 2` on the Vulkan1 router so Gemma and the reranker coexist. MTP remains disabled for Gemma unless exact Hindsight end-to-end benchmarks prove it is not slower for the prompt-heavy workload.

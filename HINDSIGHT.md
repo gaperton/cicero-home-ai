@@ -8,9 +8,9 @@ This machine runs a LAN-accessible Hindsight memory server backed by the localho
 - PostgreSQL: `127.0.0.1:5432` and the local Unix socket
 - LLM: secondary llama.cpp router at `http://127.0.0.1:8081/v1`
 - LLM model: `gemma4-26b-a4b`
-- LLM router config: `models-1.ini`, MoE-only, two inference slots
+- LLM router config: `models-1.ini`; the secondary router allows two resident models so Gemma and the reranker can coexist
 - Embeddings: `BAAI/bge-m3`, local CPU inference
-- Reranker: `BAAI/bge-reranker-v2-m3`, local CPU inference
+- Reranker: `qwen3-reranker-0.6b`, Q8_0 GGUF on Vulkan1 through llama.cpp's `/v1/rerank` endpoint
 - Database: `hindsight`
 - PostgreSQL role: `gaperton`, authenticated through Unix-socket peer authentication
 
@@ -62,15 +62,30 @@ The deployment is optimized for memories and queries that mix Russian and Englis
 
 ### Reranker
 
-`BAAI/bge-reranker-v2-m3` replaces the small English-focused MS MARCO MiniLM default. It is multilingual and reranks candidates after semantic, keyword, graph, and temporal retrieval.
+Hindsight uses the multilingual `Qwen3-Reranker-0.6B` Q8_0 GGUF preset in `models-1.ini`. Hindsight 0.8.6 is directly compatible with llama.cpp reranking: its `litellm` reranker provider posts to `{API_BASE}/rerank`, so an API base ending in `/v1` reaches llama.cpp's `/v1/rerank`. No protocol adapter or Hindsight code patch is required.
 
-The reranker is configured with:
+Persistent Hindsight settings in `/home/gaperton/.config/hindsight/hindsight.env`:
 
-- CPU inference
-- Maximum concurrency: 2
-- Length-based bucket batching enabled
+```dotenv
+HINDSIGHT_API_RERANKER_PROVIDER=litellm
+HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://127.0.0.1:8081/v1
+HINDSIGHT_API_RERANKER_LITELLM_MODEL=qwen3-reranker-0.6b
+```
 
-The lower concurrency avoids CPU thrashing on the Ryzen 7 5700X.
+The corresponding `models-1.ini` preset enables `reranking = true`, offloads all layers to Vulkan1, uses eight parallel slots, and sets `ctx-size`, `batch-size`, and `ubatch-size` to 8192. The 8192 physical batch is required for real Hindsight candidates: llama.cpp's default 512-token physical batch returned HTTP 500 when a query-document pair exceeded it. `run.sh` overrides the secondary router to `--models-max 2`, allowing `gemma4-26b-a4b` and `qwen3-reranker-0.6b` to remain loaded together instead of evicting each other on every Recall/LLM transition.
+
+The previous CPU fallback was `BAAI/bge-reranker-v2-m3`, configured with the `local` provider, forced CPU execution, FP16 disabled, length-bucket batching, and maximum concurrency 2. To roll back, replace the three active LiteLLM variables above with the following values, restart `hindsight.service`, and confirm the effective process environment and a live Recall:
+
+```dotenv
+HINDSIGHT_API_RERANKER_PROVIDER=local
+HINDSIGHT_API_RERANKER_LOCAL_MODEL=BAAI/bge-reranker-v2-m3
+HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=true
+HINDSIGHT_API_RERANKER_LOCAL_FP16=false
+HINDSIGHT_API_RERANKER_LOCAL_BUCKET_BATCHING=true
+HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT=2
+```
+
+The low CPU concurrency avoids thrashing on the Ryzen 7 5700X. Changing the reranker does not require re-embedding stored memories.
 
 ### Embedding-dimension warning
 
@@ -90,8 +105,8 @@ Hindsight uses the secondary llama.cpp router so it does not contend with the pr
 - Endpoint: `http://127.0.0.1:8081/v1`
 - Model: `gemma4-26b-a4b`
 - Quantization: `UD-Q6_K_XL`
-- Hindsight LLM concurrency: 2
-- Router slots: 2, with 131072 tokens per slot when this model is loaded
+- Hindsight LLM concurrency: 4
+- Router slots: 4; `ctx-size = 600000`, with the live router reporting `n_ctx = 150016` per slot
 - Continuous batching: enabled
 - Timeout: 300 seconds
 - Strict structured schemas: enabled
@@ -205,6 +220,32 @@ Restore into an empty database only after stopping Hindsight. A typical restore 
 
 ## Verified behavior
 
+### Vulkan GPU reranker deployment (2026-08-03)
+
+The production `hermes` bank exposed a CPU reranking bottleneck that the earlier disposable-bank tests did not represent. With `BAAI/bge-reranker-v2-m3` on CPU, a Recall reranked 45 candidates in 27.483 seconds and took 27.694 seconds end to end; reranking consumed 99.2% of the request.
+
+After switching Hindsight to `qwen3-reranker-0.6b` through llama.cpp, the same fixed question — “Which two GPU models are installed in the cicero host?” — produced these live measurements on the Hermes tool path:
+
+| Run | Candidates | Reranking | Total Recall |
+| --- | ---: | ---: | ---: |
+| First successful GPU run | 59 | 4.639 s | 4.874 s |
+| Warm GPU run | 59 | 3.686 s | 3.901 s |
+
+The warm result is 7.46× faster in reranking and 7.10× faster end to end than the CPU baseline, an 85.9% reduction in total Recall latency. The correct hardware fact — two Radeon AI PRO R9700 GPUs — ranked first. Retrieval still returned many historical and superseded facts, so corpus cleanup, candidate limits, and final-output thresholds remain separate quality work; GPU acceleration does not solve corpus pollution.
+
+A focused ad-hoc verifier subsequently exercised the configuration file, effective Hindsight process environment, both health endpoints, direct English/Russian reranking, model co-residency, and full HTTP Recall. It passed with Gemma and Qwen3-Reranker simultaneously loaded. That direct HTTP request reranked 256 candidates in 11.231 seconds and completed in 11.453 seconds (11.458 seconds at the verifier wall clock), so it is not directly comparable to the 59-candidate Hermes-tool measurements. The verifier was temporary and this repository has no canonical automated test suite.
+
+Operational verification commands:
+
+```bash
+pid=$(systemctl --user show hindsight.service -p MainPID --value)
+tr '\0' '\n' < "/proc/$pid/environ" | grep '^HINDSIGHT_API_RERANKER_'
+curl -fsS http://127.0.0.1:8081/v1/models
+curl -fsS http://127.0.0.1:8081/v1/rerank \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3-reranker-0.6b","query":"GPU model","top_n":2,"documents":["AMD Radeon AI PRO R9700","PostgreSQL database"]}'
+```
+
 ### Gemma versus Qwen Hindsight comparison (2026-08-02)
 
 A controlled operation-level comparison used the same Hindsight configuration, three-item bilingual memory workload, exact access-code checks, strict schemas, CPU embedding and reranking models, two router slots, and the deployed GGUF presets. Each workflow performed Retain, Russian-to-English Recall, Reflect, and consolidation, then deleted its temporary bank. Reflect was placed before explicit consolidation so the operations could be timed independently; Hindsight's automatic consolidation can still overlap them.
@@ -258,16 +299,15 @@ A service restart preserved the memories and cross-language recall. Consolidatio
 
 ## Resource footprint
 
-After the multilingual models were loaded and exercised:
+After the multilingual models were loaded and exercised (the disk/cache figures below predate the GPU reranker switch):
 
-- Hindsight RSS: approximately 4.0 GiB
+- Hindsight RSS after the GPU reranker switch: approximately 2.4 GiB
 - Hugging Face cache: approximately 6.6 GiB, including current and previously used models
 - Hindsight virtual environment: approximately 2.1 GiB
 - Inactive embedded pg0 rollback directory: approximately 139 MiB
-- BGE model cold start: approximately 1 minute 50 seconds during the first download and load
-- Warm restarts still load both models from disk and are slower than the former small-model setup
+- The old BGE CPU reranker remains in the Hugging Face cache as rollback data but is no longer loaded by Hindsight
 
-The models are forced onto CPU so both Radeon GPUs remain dedicated to llama.cpp.
+Embeddings remain on CPU. Reranking now runs in llama.cpp on Vulkan1 alongside the Hindsight LLM.
 
 ## Security notes
 

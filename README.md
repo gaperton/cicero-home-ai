@@ -4,9 +4,9 @@ Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/ll
 
 ## How it works
 
-`llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the model name in the request; when a model isn't loaded, the router starts a child process for it and proxies the request. With `--models-max 1`, only one model is in VRAM at a time per instance (LRU eviction).
+`llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the model name in the request; when a model isn't loaded, the router starts a child process for it and proxies the request. The primary router uses `--models-max 1` (LRU eviction). `run.sh` overrides the secondary router to `--models-max 2` so its Hindsight LLM and small reranker can remain resident together.
 
-Two instances run side by side, one per GPU (Vulkan backend, no layer-split): port 8080 on GPU0 loads `models-0.ini`, while port 8081 on GPU1 loads `models-1.ini`. Running each GPU independently outperforms splitting a single model across both cards, and lets two different models stay resident at once.
+Two instances run side by side, one per GPU (Vulkan backend, no layer-split): port 8080 on GPU0 loads `models-0.ini`, while port 8081 on GPU1 loads `models-1.ini`. Running each GPU independently outperforms splitting a single model across both cards. In the normal Hindsight configuration, one primary-router model plus Gemma and the Qwen3 reranker can be resident across the two cards.
 
 **Open WebUI** runs on port 3000 and uses only the primary Vulkan0 router on port 8080. The secondary Vulkan1 router on port 8081 is reserved for Hindsight and direct API clients. Both raw llama.cpp APIs remain reachable on the LAN as `http://cicero.local:8080/v1` and `http://cicero.local:8081/v1`.
 
@@ -114,9 +114,12 @@ Each preset must fit a single 32 GB card, since instances are pinned one-per-GPU
 | Vulkan0:8080 | `qwen3.6-27b` | Qwen3.6 27B UD-Q6_K_XL with built-in MTP |
 | Vulkan0:8080 | `gemma4-31b` | Gemma 4 31B Q6_K with an MTP draft model |
 | Vulkan1:8081 | `qwen3.6-35b-a3b` | Qwen3.6 35B-A3B MoE UD-Q5_K_XL, two parallel slots, MTP depth 2 |
-| Vulkan1:8081 | `gemma4-26b-a4b` | Gemma 4 26B-A4B MoE UD-Q6_K_XL, two parallel slots, MTP disabled |
+| Vulkan1:8081 | `gemma4-26b-a4b` | Gemma 4 26B-A4B MoE UD-Q6_K_XL, four parallel slots, MTP disabled |
+| Vulkan1:8081 | `qwen3-reranker-0.6b` | Qwen3-Reranker 0.6B Q8_0, eight parallel slots, `/v1/rerank` endpoint for Hindsight |
 
-The files are independent: instance 0 contains the dense presets, while instance 1 contains only MoE presets and allows two parallel calls. Open WebUI lists only the instance-0 presets; instance 1 remains available to Hindsight and direct OpenAI-compatible API clients. Context is auto-fit to available VRAM (`fit-target = 256` in each file).
+The files are independent: instance 0 contains the dense presets, while instance 1 contains the Hindsight-oriented MoE presets and GPU reranker. The instance-1 router allows two resident models; the normal pair is `gemma4-26b-a4b` plus `qwen3-reranker-0.6b`. Open WebUI lists only the instance-0 presets; instance 1 remains available to Hindsight and direct API clients. Context is auto-fit to available VRAM (`fit-target = 256` in each file).
+
+Hindsight uses its `litellm` reranker provider with API base `http://127.0.0.1:8081/v1`, which maps directly to llama.cpp's `/v1/rerank`; no adapter is required. See [HINDSIGHT.md](HINDSIGHT.md) for the persistent environment settings, benchmark results, verification, and CPU rollback procedure.
 
 ### Adding or changing models
 
