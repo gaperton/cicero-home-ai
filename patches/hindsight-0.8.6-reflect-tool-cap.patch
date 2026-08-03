@@ -1,0 +1,92 @@
+diff --git a/hindsight_api/engine/reflect/agent.py b/hindsight_api/engine/reflect/agent.py
+--- a/hindsight_api/engine/reflect/agent.py
++++ b/hindsight_api/engine/reflect/agent.py
+@@ -48,6 +48,7 @@
+ logger = logging.getLogger(__name__)
+ 
+ DEFAULT_MAX_ITERATIONS = 10
++MAX_TOOL_CALL_COMPLETION_TOKENS = 4096
+ 
+ # Fallback answer when the LLM returns nothing usable. Consumers that need to
+ # tell a real answer from this placeholder (e.g. refresh outcome metadata's
+@@ -811,6 +812,7 @@
+                 tools=tools,
+                 scope="reflect_tool_call",
+                 tool_choice=iter_tool_choice,
++                max_completion_tokens=min(max_tokens or MAX_TOOL_CALL_COMPLETION_TOKENS, MAX_TOOL_CALL_COMPLETION_TOKENS),
+             )
+             if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO and rolling_cache_name is not None:
+                 ct_kwargs["cached_prefix"] = rolling_cache_name
+@@ -996,12 +998,13 @@
+             )
+             if not has_gathered_evidence and iteration < max_iterations - 1:
+                 # Add assistant message and fake tool result asking for evidence
+-                messages.append(
+-                    {
+-                        "role": "assistant",
+-                        "tool_calls": [_tool_call_to_dict(done_call)],
+-                    }
+-                )
++                assistant_message = {
++                    "role": "assistant",
++                    "tool_calls": [_tool_call_to_dict(done_call)],
++                }
++                if result.reasoning_content is not None:
++                    assistant_message["reasoning_content"] = result.reasoning_content
++                messages.append(assistant_message)
+                 messages.append(
+                     {
+                         "role": "tool",
+@@ -1058,12 +1061,13 @@
+                     allowed_tools.append(tc)
+ 
+             # Build assistant message with all tool calls (LLM requires them for history)
+-            messages.append(
+-                {
+-                    "role": "assistant",
+-                    "tool_calls": [_tool_call_to_dict(tc) for tc in other_tools],
+-                }
+-            )
++            assistant_message = {
++                "role": "assistant",
++                "tool_calls": [_tool_call_to_dict(tc) for tc in other_tools],
++            }
++            if result.reasoning_content is not None:
++                assistant_message["reasoning_content"] = result.reasoning_content
++            messages.append(assistant_message)
+ 
+             # Immediately reject hallucinated tool calls without adding to trace
+             for tc in hallucinated_tools:
+diff --git a/hindsight_api/engine/providers/openai_compatible_llm.py b/hindsight_api/engine/providers/openai_compatible_llm.py
+--- a/hindsight_api/engine/providers/openai_compatible_llm.py
++++ b/hindsight_api/engine/providers/openai_compatible_llm.py
+@@ -1296,6 +1296,7 @@
+                         tool_calls.append(LLMToolCall(id=tc.id, name=tc.function.name, arguments=args))
+ 
+                 content = message.content
++                reasoning_content = getattr(message, "reasoning_content", None)
+ 
+                 # Record metrics
+                 duration = time.time() - start_time
+@@ -1355,6 +1356,7 @@
+ 
+                 return LLMToolCallResult(
+                     content=content,
++                    reasoning_content=reasoning_content,
+                     tool_calls=tool_calls,
+                     finish_reason=finish_reason,
+                     input_tokens=input_tokens,
+diff --git a/hindsight_api/engine/response_models.py b/hindsight_api/engine/response_models.py
+--- a/hindsight_api/engine/response_models.py
++++ b/hindsight_api/engine/response_models.py
+@@ -29,6 +29,10 @@
+     """Result from an LLM call that may include tool calls."""
+ 
+     content: str | None = Field(default=None, description="Text content if any")
++    reasoning_content: str | None = Field(
++        default=None,
++        description="Provider reasoning content that must be replayed with assistant tool-call messages",
++    )
+     tool_calls: list[LLMToolCall] = Field(default_factory=list, description="Tool calls requested by the LLM")
+     finish_reason: str | None = Field(default=None, description="Reason the LLM stopped: 'stop', 'tool_calls', etc.")
+     input_tokens: int = Field(

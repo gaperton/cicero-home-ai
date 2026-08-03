@@ -1,10 +1,10 @@
 # Hindsight server
 
-This machine runs a local-only Hindsight memory server backed by the Ubuntu PostgreSQL service and the secondary llama.cpp router.
+This machine runs a LAN-accessible Hindsight memory server backed by the localhost-only Ubuntu PostgreSQL service and the secondary llama.cpp router.
 
 ## Architecture
 
-- Hindsight API: `http://127.0.0.1:8888`
+- Hindsight API: `http://cicero.local:8888` on the trusted LAN; `http://127.0.0.1:8888` locally
 - PostgreSQL: `127.0.0.1:5432` and the local Unix socket
 - LLM: secondary llama.cpp router at `http://127.0.0.1:8081/v1`
 - LLM model: `gemma4-26b-a4b`
@@ -14,7 +14,7 @@ This machine runs a local-only Hindsight memory server backed by the Ubuntu Post
 - Database: `hindsight`
 - PostgreSQL role: `gaperton`, authenticated through Unix-socket peer authentication
 
-Hindsight and PostgreSQL are bound to localhost. The llama.cpp routers are LAN-accessible at `cicero.local`; the secondary router is excluded from Open WebUI and reserved for Hindsight and direct API clients. Hindsight does not contain or require a PostgreSQL password.
+Hindsight and the llama.cpp routers are LAN-accessible at `cicero.local`. PostgreSQL remains bound to localhost. The secondary router is excluded from Open WebUI and reserved for Hindsight and direct API clients. Hindsight does not contain or require a PostgreSQL password.
 
 ## Installed versions
 
@@ -30,6 +30,14 @@ Verified on 2026-08-02:
 - Embedding columns: `vector(1024)`
 
 The 2026-08-02 installation audit also verified that the Hindsight and PostgreSQL services are enabled and active, the OpenAPI document exposes 57 paths, and no warning-or-higher journal entries occurred after the current Hindsight activation.
+
+### Local Reflect safety patch
+
+Hindsight 0.8.6 leaves intermediate Reflect `call_with_tools` requests without an output-token limit. It also discards the OpenAI-compatible `reasoning_content` returned with a Gemma tool call instead of replaying it in the next assistant tool-call message, even though Gemma 4's chat template requires that history. The missing history can make follow-up turns malformed; independently, the missing token ceiling allowed one malformed call to generate more than 60,000 tokens, exceed Hindsight's 300-second wall timeout, and continue occupying a llama.cpp slot after the HTTP request had failed.
+
+The installed package is patched to cap Reflect tool-call completions at 4,096 tokens while preserving smaller caller-provided limits, and to preserve/replay `reasoning_content` across OpenAI-compatible tool turns. The reproducible patch is stored at `patches/hindsight-0.8.6-reflect-tool-cap.patch`; its regression test is `/home/gaperton/.local/share/hindsight/tests/test_reflect_tool_cap.py`. A Hindsight package upgrade may overwrite the installed patch. Re-check upstream behavior and either remove the local patch when fixed upstream or reapply it from the `site-packages` directory before restarting the service.
+
+The `reasoning_content` change was verified against the live llama.cpp response and with five repeated two-iteration Reflect workflows. All five returned the correct database and role in 55.676–68.890 seconds (median 55.931 seconds), but one workflow still needed a bounded retry after a `peg-gemma4` HTTP 500. Preserving the history is therefore a protocol-correctness fix, not a complete cure for Gemma's parser/generation failures; retain the token cap.
 
 ## Files and data
 
@@ -102,7 +110,7 @@ Check status:
 ```bash
 systemctl --user status hindsight.service
 systemctl status postgresql.service
-curl -fsS http://127.0.0.1:8888/health
+curl -fsS http://cicero.local:8888/health
 ```
 
 Restart Hindsight:
@@ -137,7 +145,7 @@ Both PostgreSQL and Hindsight are enabled at boot. The Hindsight unit uses `Rest
 Health check:
 
 ```bash
-curl -fsS http://127.0.0.1:8888/health
+curl -fsS http://cicero.local:8888/health
 ```
 
 This endpoint verifies Hindsight and database-pool health; it does **not** verify the configured LLM. Check the router separately:
@@ -152,10 +160,10 @@ Hindsight 0.8.6 also exposes `POST /v1/default/banks/{bank_id}/health/llm`, but 
 OpenAPI schema:
 
 ```bash
-curl -fsS http://127.0.0.1:8888/openapi.json
+curl -fsS http://cicero.local:8888/openapi.json
 ```
 
-The default API namespace is exposed under `/v1/default`.
+The default API namespace is exposed at `http://cicero.local:8888/v1/default`.
 
 ## PostgreSQL access
 
@@ -263,7 +271,8 @@ The models are forced onto CPU so both Radeon GPUs remain dedicated to llama.cpp
 
 ## Security notes
 
-- Do not bind Hindsight or PostgreSQL to a LAN interface without adding authentication, firewall rules, and TLS as appropriate.
+- Hindsight listens on all interfaces for trusted-LAN access and has no application-level authentication or TLS in this deployment. Block port 8888 from untrusted networks and never forward it directly to the internet.
+- PostgreSQL remains localhost-only; do not expose port 5432 to the LAN.
 - Keep `/home/gaperton/.config/hindsight/hindsight.env` mode `0600`.
 - Do not place credentials in this repository.
 - Hindsight's model cache contains downloaded public model weights, not application memories.
