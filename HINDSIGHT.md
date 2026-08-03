@@ -427,6 +427,41 @@ print(bytes(f.parts[f.data[0]]).decode())"
 
 This is a workaround, not a cure. The upstream fixes remain: extend the gpt-oss PEG grammar to accept the hybrid header, or widen the lazy-grammar triggers to cover `<|channel|>final`. Sending `tool_choice=required` on later turns would also fix it but requires patching Hindsight, which this deployment deliberately does not do.
 
+### Preset review against upstream guidance (2026-08-03)
+
+Checked the `[gpt-oss-20b]` preset against Hindsight's own docs and llama.cpp's gpt-oss guide. Three things came out of it.
+
+**1. Quantized KV cache is wrong for gpt-oss — fixed.** llama.cpp's gpt-oss guide advises against `--cache-type-k/v` quantization for this model, and it is measurably worse here:
+
+| KV cache | Prefill (22k prompt) | Decode |
+| --- | ---: | ---: |
+| `q8_0` (previous `[*]` default) | 3073 tok/s | 132.5 tok/s |
+| `f16` (current) | **3962 tok/s (+29%)** | 133.5 tok/s |
+
+Decode is unaffected; prefill is what matters for this prompt-heavy workload. VRAM with both models resident is 19.05 GiB of 31.86 GiB, so it fits comfortably. Set in `[*]`, which also covers the reranker (verified working).
+
+**2. `HINDSIGHT_API_LLM_REASONING_EFFORT` is a no-op for gpt-oss.** Hindsight's performance docs recommend `HINDSIGHT_API_LLM_REASONING_EFFORT=low`, but in 0.8.6 that value is only injected when `_supports_reasoning_model()` returns true, which matches `gpt-5`, `o1`, `o3` and some DeepSeek variants — **not** `gpt-oss`. Setting it here would do nothing. `HINDSIGHT_API_LLM_EXTRA_BODY` with `chat_template_kwargs.reasoning_effort` is the only route that reaches llama.cpp's harmony template, which is what this deployment uses. Do not "simplify" it to the documented variable.
+
+**3. Preset items confirmed correct against upstream guidance:** `--jinja` required for tool calling (set in `[*]`); repetition penalties must be disabled (`repeat-penalty = 1.0`); flash attention recommended (`flash-attn = true`); `ubatch-size 2048` matches the guide's `-ub 2048`. Sampling params stay omitted because Hindsight sends per-operation temperatures.
+
+#### Open lever: `HINDSIGHT_API_RERANKER_MAX_CANDIDATES`
+
+Hindsight's docs recommend `100` for local deployments (default `300`). Measured on the live `hermes` bank across five varied English and Russian queries:
+
+| Query | Recall @300 | Recall @100 | Facts returned | Top-10 overlap | Top-3 identical |
+| --- | ---: | ---: | ---: | ---: | :---: |
+| GPU models | 13.27 s | 4.37 s | 63 vs 63 | 10/10 | yes |
+| Reranker history | 12.84 s | 4.63 s | 62 vs 58 | 7/10 | yes |
+| Database (RU) | 12.51 s | 4.30 s | 63 vs 62 | 9/10 | yes |
+| Gemma problems | 12.67 s | 4.56 s | 60 vs 59 | 10/10 | yes |
+| Open WebUI config | 13.06 s | 5.05 s | 90 vs 80 | 10/10 | no |
+
+Recall is ~3x faster and the head of the ranking is nearly unchanged — top-3 identical in four of five queries — but it is **not free**: up to 11% fewer facts are returned and one query's top-3 reordered. Facts that RRF ranks below 100 can no longer be rescued by the cross-encoder.
+
+**Left at the default 300.** Switching to 100 is defensible and is upstream's own advice, but it trades retrieval breadth for latency and that is a judgement call about this corpus, not a pure win.
+
+Also noted but not changed: Hindsight's docs suggest `HINDSIGHT_API_LLM_MAX_CONCURRENT=2` for local use and "leave at least one slot free per shared client". This deployment runs 3 against `parallel = 3`, so Hindsight can saturate the router. That is deliberate, but `:8081` does serve other clients, and a concurrent writer was observed during benchmarking — if the Hermes agent starts contending for slots, drop this to 2.
+
 ### Gemma versus Qwen Hindsight comparison (2026-08-02)
 
 A controlled operation-level comparison used the same Hindsight configuration, three-item bilingual memory workload, exact access-code checks, strict schemas, CPU embedding and reranking models, two router slots, and the deployed GGUF presets. Each workflow performed Retain, Russian-to-English Recall, Reflect, and consolidation, then deleted its temporary bank. Reflect was placed before explicit consolidation so the operations could be timed independently; Hindsight's automatic consolidation can still overlap them.
