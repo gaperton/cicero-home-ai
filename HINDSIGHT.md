@@ -100,7 +100,7 @@ Persistent Hindsight settings in `/home/gaperton/.config/hindsight/hindsight.env
 ```dotenv
 HINDSIGHT_API_RERANKER_PROVIDER=litellm
 HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://127.0.0.1:8081/v1
-HINDSIGHT_API_RERANKER_LITELLM_MODEL=qwen3-reranker-0.6b
+HINDSIGHT_API_RERANKER_LITELLM_MODEL=reranker
 HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC=3072
 HINDSIGHT_API_RERANKER_MAX_CANDIDATES=100
 ```
@@ -138,7 +138,7 @@ Do not change the embedding model casually after storing real data.
 Hindsight uses the secondary llama.cpp router so it does not contend with the primary endpoint:
 
 - Endpoint: `http://127.0.0.1:8081/v1`
-- Model: `gpt-oss-20b` — Hindsight's own strongest official local recommendation. It replaced `gemma4-26b-a4b`, whose `peg-gemma4` tool-call path hits the unfixed llama.cpp #21375 runaway-generation loop.
+- Model: `gpt-oss-20b` — Hindsight's own strongest official local recommendation. It replaced `gemma4-26b-a4b`, whose tool-call path never terminates on a real bank. Re-tested and re-confirmed 2026-08-06; see "Gemma 4 retest and final rejection" below.
 - Quantization: `UD-Q8_K_XL`
 - Hindsight LLM concurrency: 3 (`HINDSIGHT_API_LLM_MAX_CONCURRENT=3`) — matches the router's 3 slots exactly. The per-operation override vars (`HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `..._REFLECT_...`, `..._CONSOLIDATION_...`) exist in the Hindsight codebase but are unset here, so every LLM call (Retain, Reflect, Consolidation) shares the single global semaphore of 3 — there is no way for Hindsight to oversubscribe the slots.
 - Router slots: 3; `ctx-size = 300000` (100,000 tokens/slot)
@@ -174,12 +174,12 @@ Hindsight's reranker is `qwen3-reranker-0.6b` (Q8_0 GGUF, `ggml-org/Qwen3-Rerank
 ```
 HINDSIGHT_API_RERANKER_PROVIDER=litellm
 HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://127.0.0.1:8081/v1
-HINDSIGHT_API_RERANKER_LITELLM_MODEL=qwen3-reranker-0.6b
+HINDSIGHT_API_RERANKER_LITELLM_MODEL=reranker
 ```
 
 This replaced the local CPU `BAAI/bge-reranker-v2-m3` path, which was the dominant cost in every slow Recall (one call spent 34.7s of its 34.88s total in the `[4] Reranking [cross-encoder]` stage alone).
 
-- Preset: `models-1.ini`, `[qwen3-reranker-0.6b]` — `kv-unified = true`, `parallel = 8`, `ctx-size = 32768`, `batch-size = 4096`, `ubatch-size = 4096`
+- Preset: `models-1.ini`, `[reranker]` (`qwen3-reranker-0.6b`) — `kv-unified = true`, `parallel = 8`, `ctx-size = 32768`, `batch-size = 4096`, `ubatch-size = 4096`
 - Requires `--models-max 2` on the Vulkan1 `llama-server` instance (set explicitly in `run.sh`, overriding `.env`'s global `--models-max 1`) so the LLM and the reranker stay resident simultaneously instead of evicting each other on every call — this is a **startup-only** flag; changing it needs `systemctl --user restart cicero-home-ai.service`, not just a router preset reload
 - `ctx-size` is a **total**, divided across `parallel` slots. Read it per slot: the per-slot figure is the hard ceiling on one query+document pair, and llama.cpp rejects the **entire** rerank request with HTTP 400 `exceed_context_size_error` if any single pair exceeds it — not just the offending document. An earlier `ctx-size = 8192` with `parallel = 8` therefore gave 1,024 tokens per pair; verified live on 2026-08-03 with a three-document batch where one 2,115-token document failed all three. The longest stored `memory_units.text` at that time was 2,490 characters (~700 tokens), plus the `context: ` prefix Hindsight prepends — under the old ceiling, but with almost no headroom.
 - `batch-size`/`ubatch-size` must stay bounded (8192, not higher) and `ubatch-size` must remain **≥ the per-slot context**, since reranking is non-causal and a pair has to fit in a single physical batch. An earlier attempt at 8192 alongside `parallel=8` was fine, but pushing `parallel` to 32 with a proportionally larger `ctx-size` blew the combined footprint over the card and dumped ~30 GiB into GTT, silently degrading the LLM's own throughput (prompt processing dropped from ~200 tok/s to ~134 tok/s) alongside the reranker.
@@ -426,7 +426,7 @@ Sampling and reasoning effort cannot fix this, but the **prompt** can. Appending
 {{- "\nYou must always respond by calling a tool. To give your answer, call the 'done' tool. Never answer directly and never emit the 'final' channel while tools are available." }}
 ```
 
-Wired in through `chat-template-file` in the `[gpt-oss-20b]` preset. Measured effect:
+Wired in through `chat-template-file` in the `[llm]` preset (`gpt-oss-20b` in `models-1-oss.ini`). Measured effect:
 
 | Metric | Stock template | Custom template |
 | --- | ---: | ---: |
@@ -451,7 +451,7 @@ This is a workaround, not a cure. The upstream fixes remain: extend the gpt-oss 
 
 ### Preset review against upstream guidance (2026-08-03)
 
-Checked the `[gpt-oss-20b]` preset against Hindsight's own docs and llama.cpp's gpt-oss guide. Three things came out of it.
+Checked the `[llm]` preset (`gpt-oss-20b` in `models-1-oss.ini`) against Hindsight's own docs and llama.cpp's gpt-oss guide. Three things came out of it.
 
 **1. Quantized KV cache is wrong for gpt-oss — fixed.** llama.cpp's gpt-oss guide advises against `--cache-type-k/v` quantization for this model, and it is measurably worse here:
 
@@ -503,6 +503,248 @@ Recall is ~3x faster and the head of the ranking is nearly unchanged — top-3 i
 **Set to 100.** The tail it discards is largely the historical and superseded material this corpus is already known to carry, and Recall is the most frequently exercised operation. Reflect benefits too, because its tool calls invoke Recall internally: `hermes` Recall 13.207 s -> 4.367 s and Reflect 34.734 s -> 24.218 s. Raise it back to 300 if a lookup is ever found to miss a fact that RRF ranked below 100.
 
 Also noted but not changed: Hindsight's docs suggest `HINDSIGHT_API_LLM_MAX_CONCURRENT=2` for local use and "leave at least one slot free per shared client". This deployment runs 3 against `parallel = 3`, so Hindsight can saturate the router. That is deliberate, but `:8081` does serve other clients, and a concurrent writer was observed during benchmarking — if the Hermes agent starts contending for slots, drop this to 2.
+
+### Gemma 4 retest and final rejection (2026-08-06)
+
+`gemma4-26b-a4b-qat` was re-tried as the Hindsight LLM and reverted the same day.
+It is now an on-demand-only preset in `models-1.ini`. Do not promote it again
+without reading this section.
+
+**What prompted the retest.** The original rejection blamed llama.cpp #21375, and
+the old Gemma preset never set `reasoning`, so it inherited llama.cpp's
+`--reasoning auto` = ON. Turning thinking off looked like it might be the missing
+piece: with `reasoning = off`, Retain and Consolidation stopped overgenerating
+(output tokens fell from 1719–8242 to 130–400, Retain 31–37s to 4.6–11s).
+
+**Where it fails.** Reflect on a real bank never terminates. Against the
+1749-memory `psychology` bank it failed on every attempt, decoding past
+28,000–47,000 tokens with no EOS until Hindsight's 300s timeout returned HTTP 504.
+llama.cpp keeps generating after the client gives up, so each failure permanently
+wedges a slot — one run left 2 of 3 slots occupied, degrading everything else on
+the router until a restart.
+
+Small banks hide this completely. A 3-item disposable bank passed
+Retain/Recall/Reflect/Consolidate cleanly (Reflect 2.4s average, 55 output tokens
+maximum). That is why the earlier `gemma-test-*` runs looked healthy. **Any future
+model swap must be validated against `psychology` or another large bank, not just
+the disposable-bank workflow** — `benchmark/e2e-psychology.py` does both.
+
+**Not an agentic loop — this was checked directly.** The obvious innocent
+explanation is that Reflect is agentic and Gemma simply takes many tool-call
+turns. It is ruled out on two independent grounds. First, Hindsight caps Reflect
+at `DEFAULT_REFLECT_MAX_ITERATIONS = 10`, so the loop is bounded by construction.
+Second, and decisively, each agentic turn is a separate HTTP request and
+therefore a separate llama.cpp task; the llama-server log shows a *single* task
+id climbing monotonically — `task 54 | n_decoded = 307 … 33,525` across 130 log
+lines, with `max_tokens: -1` and `n_predict: -1` in the slot params, i.e. nothing
+capping generation but EOS. That is one request that never terminates, not ten
+that each finish.
+
+**The trigger is `tool_choice: "required"`.** Captured verbatim off the wire with
+a logging proxy in front of the router (`HINDSIGHT_API_LLM_DEBUG_DUMP_4XX` is
+useless here — it only fires on a 4xx, and this failure is a client-side wall
+timeout with no HTTP error). Reconstructions had all terminated cleanly precisely
+because they used `tool_choice: auto`. The captured hanging request is:
+
+```
+messages=4 (system 8934 ch, user 53, assistant tool_call, tool result 66959 ch)
+tools=['recall']          <- a single tool; `done` is NOT offered on this turn
+tool_choice="required"
+```
+
+Replayed byte-for-byte, with one variable changed:
+
+| Replay | Result |
+| --- | --- |
+| verbatim, `tool_choice: "required"` | still generating at 150 s, 23,431 chars, tail `*_**_**_**_**…` |
+| identical, `tool_choice: "auto"` | **6 s**, `finish_reason=stop`, clean 2,800-char answer |
+| verbatim + `done` added to `tools` | still hangs — 14,032 chars, tail `______…` |
+
+So it is not about which tools are offered, and not about context size. In
+`common/chat.cpp` the Gemma 4 grammar for the required case is
+
+```
+start + zero_or_more(message) + scan_to_toolcall + tool_call
+scan_to_toolcall = until("<|tool_call>")                      // unbounded
+tool_call        = repeat(..., min = tool_choice==REQUIRED ? 1 : 0, ...)
+grammar_lazy     = !(has_response_format || (has_tools && tool_choice==REQUIRED))
+```
+
+With `required`, `grammar_lazy` is false and `min = 1`, so a tool call is still
+outstanding and EOS is never in the allowed set, while `scan_to_toolcall` lets the
+model emit unlimited content on the way there. Gemma has already gathered its
+evidence by this turn and wants to write the final answer as prose — it starts
+doing exactly that, coherently, and then can never stop, degenerating into
+single-token repetition. That is the collapse of google-deepmind/gemma#622
+happening inside a state the grammar gives no exit from.
+
+Hindsight reaches this state by design: `engine/reflect/agent.py` forces a
+hierarchical retrieval sequence (`search_mental_models` → `search_observations` →
+`recall`) for the first iterations, narrowing `tools` to the single forced tool
+and sending `tool_choice` required. There is no env knob to disable the forcing
+(`HINDSIGHT_API_REFLECT_LLM_STRATEGY` configures fallback models, not this), so
+this is not tunable from configuration.
+
+**Why gpt-oss is unaffected:** not luck, and not better instruction-following.
+`common_chat_params_init_gpt_oss` already special-cases this exact situation and
+drops its content-only alternative when the tool choice is required
+(`return p.zero_or_more(start + any) + start + tool_call;` vs. the
+`(tool_call | final_msg)` it uses otherwise). Its grammar makes the free-content
+path unreachable, so the no-exit state cannot arise. `functionary_v3_2`
+special-cases `REQUIRED` too. The gemma4 parser is the outlier that does not.
+
+**A local patch fixes the grammar bug — but NOT all of the hangs.** Removing the
+free-content branch from the gemma4 grammar when a tool call is required (mirroring
+what gpt-oss already does) lives in
+`patches/llamacpp-gemma4-required-toolcall.patch`, is re-applied automatically by
+`build.sh`, and has an upstream writeup in
+`llamacpp-gemma4-required-toolcall-PR.md`. It makes the captured request terminate
+in 9.7 s with `finish_reason=tool_calls`, and takes `psychology` Reflect from 0/3
+probes passing to 2/3.
+
+**A second, unrelated failure remains that the patch does not touch.** Post-patch
+e2e (2026-08-07, llama.cpp `4cf5cab65`) still lost one probe to a 300 s timeout.
+That one is not the grammar: the session completed only two LLM calls (14.9 s
+total) then hung on the third, which the wire capture shows is an **`auto`** turn —
+`tool_choice: null`, 4 tools, ~132 KB prompt — where `grammar_lazy` is true and EOS
+is freely available. The live slot showed `n_prompt = 95274` against the 100000
+per-slot ceiling, with `n_decoded` past 45000. That is the high-context repetition
+collapse of llama.cpp#21799 / google-deepmind/gemma#622 — a model defect that no
+grammar change addresses.
+
+It is **intermittent**: the same query then succeeded 5 times running (81-86 s).
+Roughly 1 failure in 12 psychology Reflects post-patch (~8%), against 100% before.
+Each failure still wedges a slot until the router restarts.
+
+**So gemma stays a non-production profile.** ~8% of Reflects hanging and costing a
+slot is not acceptable for the primary Hindsight LLM, and gpt-oss does the same
+work 2-3x faster (Reflect 22-30 s vs 68-86 s). On the same patched binary gpt-oss
+e2e is 3/3 on every probe with no errors, so the patch causes no regression there —
+as expected, since it only touches the gemma4 parser.
+
+**Probable root cause is the model, not llama.cpp** (consistent with the above but
+not locally confirmed). google-deepmind/gemma#622 documents
+token-repetition collapse in both `gemma-4-31B` dense and `gemma-4-26B-A4B` MoE,
+reproducing on Ollama, LMStudio, vLLM and Cloudflare Workers AI; `gemma3-27b` is
+unaffected on the same stacks. It surfaces most reliably under grammar-constrained
+decoding at 1000+ generated tokens: the grammar keeps EOS out of the allowed token
+set, so the model's mild repetition bias becomes an inescapable loop
+(vllm-project/vllm#40080). Hindsight's Reflect is exactly that shape — it calls
+tools, and llama.cpp always applies a tool-call grammar. Upstream llama.cpp #21375
+is closed "not planned"; #25072 and #21799 are open and unfixed.
+
+**Mitigations tested, all failed.** Each was a single-variable change re-run
+against `psychology`:
+
+| Change | Result |
+| --- | --- |
+| `reasoning = off` | Fixes Retain/Consolidation overgeneration only; Reflect still runs away |
+| `temp = 0.2` (from Gemma's official 1.0) | Runaway identical — 28,699 tokens |
+| `HINDSIGHT_API_LLM_STRICT_SCHEMA=false` | No effect; tool calls are grammar-constrained regardless of `response_format` |
+| DRY sampler, `0.8 / 1.75 / 2 / 8192` (2026-08-07) | No effect — 27,731 tokens at timeout, indistinguishable from runs without it |
+
+Upstream also reports `repeat-penalty` 1.0–1.5 has no effect, so this repo's
+`repeat-penalty = 1.0` convention is not the cost here. Note that
+`dry-penalty-last-n` must be an explicit positive window: `llama-sampler.cpp`
+applies `max(dry_penalty_last_n, 0)` and then treats `0` as disabled, so `-1`
+silently turns DRY off instead of meaning "whole context".
+
+**Neither a schema change nor a template change can fix this** — worth knowing
+before anyone tries. In `common/chat.cpp`, the Gemma 4 tool grammar does not use
+the caller's tool `parameters` schema at all; the line that would read it is
+commented out behind a `TODO`, and arguments are matched by
+`p.tool_args(p.ref("gemma4-dict"))` — a generic dict whose string values are
+`until("<|\"|>")` and whose keys are `chars("[^:}]", 1, -1)`, both unbounded.
+So `maxLength`/`minLength`, which `json-schema-to-grammar.cpp` genuinely does
+support, never reach this path no matter what Hindsight puts in its tool schemas.
+And the grammar is constructed in C++ from the `peg-gemma4` format, so the Jinja
+chat template cannot alter it — unlike the gpt-oss harmony template fix, which
+worked because it changed which *channel* tool calls were emitted on, a
+prompt-side concern. Only a local llama.cpp patch could bound this grammar, at
+the cost of the "track latest, no local patches" convention and a re-apply after
+every `build.sh` pull.
+
+**Restored configuration.** `gpt-oss-20b` back to `load-on-startup = true`,
+`HINDSIGHT_API_LLM_MODEL=gpt-oss-20b`, `HINDSIGHT_API_LLM_STRICT_SCHEMA=true`, and
+`HINDSIGHT_API_LLM_EXTRA_BODY` with `reasoning_effort=low` restored — that env var
+and the gpt-oss preset are a pair; the variable is inert for Gemma and was unset
+during the retest. Verified after revert: `psychology` Reflect returned a coherent
+2474-character answer in 34.2s.
+
+### The second Gemma defect, isolated (2026-08-07)
+
+The hang that survived the llama.cpp grammar patch was tracked to root cause by
+capturing the failing request off the wire and replaying it. Everything below is
+measured, not inferred; several earlier guesses recorded here were wrong and are
+listed at the end so they are not re-derived.
+
+**Mechanism.** On a forced turn (`tool_choice: "required"`, `tools: ['recall']`)
+the model already has its evidence and wants to call `done` with the final answer.
+It cannot — `done` is not offered — so it drafts the answer *inside its thought
+block* and never escapes: `thought` is `p.until("<channel|>")`, unbounded, and EOS
+stays outside the allowed set until the mandatory tool call appears. Replaying one
+captured request 120 times: **5 hangs (4.2%), all 5 with the runaway in
+`reasoning_content`**, zero content, zero tool args. The client sees silence, not a
+runaway, because nothing downstream watches `reasoning_content` — which is why this
+was mistaken for a stall for so long.
+
+**There are three unbounded rules in this grammar, not one.** All the same class:
+
+| Rule | Bound | Confirmed by |
+| --- | --- | --- |
+| `scan_to_toolcall` / `content` | none | the original bug; fixed by our patch |
+| `thought` = `until("<channel|>")` | none | 5/120 hangs in `reasoning_content` |
+| `gemma4-array` / `gemma4-string-content` | none | 11/12 hangs in tool args (below) |
+
+**Fix candidates, measured head to head** (same captured request, 12 trials each):
+
+| Strategy | Hangs | Finished as |
+| --- | --- | --- |
+| A. `recall` only, `required` — production today | 0/12 | `recall` x12 |
+| B. `recall`+`done`, `required` — "give it an exit" | **11/12** | `done` x1 |
+| C. `recall`+`done`, `auto` — "stop forcing" | 0/12 | **`content` x12** |
+| D. `recall` only, `auto` | 0/12 | **`content` x12** |
+
+**B is a trap.** Offering `done` on a forced turn is ~20x worse than today: `done`
+requires `memory_ids`, an array of ID strings, and the model collapses into
+repeating one UUID forever inside the unbounded array rule.
+
+**C/D break Reflect.** `auto` stops the hang but the model answers in plain prose
+and calls no tool at all (24/24). `agent.py` raises `ReflectToolCallError` when a
+turn produces no tool call and none was seen earlier, and deliberately no longer
+salvages the free text ("it can be a raw done()-payload with sibling id fields
+leaking into user-visible text"). Turn 0 under `auto` therefore fails outright, and
+the hierarchical retrieval ladder — and with it the "ONLY use retrieved results"
+anti-hallucination guarantee — is lost.
+
+**The tractable Hindsight-side change** is to widen the existing
+`stop_forcing_from_iteration` release (agent.py), which today fires only when fresh
+mental models are found. The hang lands on the *second* forced turn, after
+`search_observations` already returned 66 KB of evidence — exactly where forcing has
+stopped earning anything. That keeps turn 0 forced, keeps `saw_tool_call` true, and
+removes the turn where the model fights the constraint. It is a mitigation: any
+forced turn can still reach an unbounded rule.
+
+**The real fix belongs in llama.cpp.** Hindsight uses `tool_choice: required`
+correctly; no API consumer should be able to hang a server with it.
+
+**Deployed mitigation: `n-predict = 4096` on both profiles.** Not a fix — it bounds
+blast radius. 5/120 hangs without it, **0/120 with it**, and degenerate runs abort
+at ~21 s still returning a valid tool call instead of holding a slot to the 300 s
+timeout. Real maxima sit far below the cap (retain 652 output tokens, consolidation
+276, reflect 1424, e2e max 855), and a full gpt-oss e2e under the cap is unchanged
+(3/3 every probe, `max_out` 1437). It is also cheap insurance for gpt-oss, which had
+an unbounded runaway during the corrupt-GGUF incident above.
+
+**Ruled out, with evidence** — do not revisit without new information:
+
+| Hypothesis | Verdict |
+| --- | --- |
+| High context (~95k tokens) | Hang occurs at 32k; 84,428 tokens passes 3/3 |
+| An `auto` turn | It is a `required` turn; wire capture is unambiguous |
+| Slot prefix-cache reuse (`f_sim` / `f_keep`) | 1/16 hangs with `cache-ram = 0` vs 2/18 with cache on |
+| Sampler settings | temp 1.0 vs 0.2, DRY, repeat-penalty all measured no different |
+| Request content | Same bytes hang 4.2% and succeed 95.8% — it is stochastic |
 
 ### Gemma versus Qwen Hindsight comparison (2026-08-02)
 

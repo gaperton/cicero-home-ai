@@ -1,37 +1,74 @@
 #!/usr/bin/env bash
-# bench-mtp.sh — For each Qwen 3.6 27B/35B-A3B and Gemma 4 31B/26B-A4B quant,
-# autofit context with a Q8_0 KV cache and measure decode t/s with and without
-# MTP (multi-token-prediction / self-speculative decoding).
+# bench-mtp.sh — A/B multi-token prediction (MTP / self-speculative decoding)
+# on the Hindsight workload, for the models that can serve as Hindsight's LLM.
 #
-# Qwen 3.6's MTP head is baked into the main gguf (qwen35.nextn_predict_layers),
-# so --spec-type draft-mtp alone runs it against the target model itself.
-# Gemma 4 ships its MTP head as a separate small "gemma4-assistant" gguf
-# (see models/Gemma4-31B/MTP/, models/Gemma4-31B-QAT/MTP/ for the dense model,
-# models/Gemma4-26B-A4B/ and models/Gemma4-26B-A4B-QAT/ for the MoE — the MoE
-# sidecar sits at the repo root, not under an MTP/ subfolder), so those
-# entries also need -md pointing at that sidecar file.
+# This exists to settle one standing question, recorded in CLAUDE.md: "MTP
+# remains disabled unless exact Hindsight end-to-end benchmarks prove it is not
+# slower for the prompt-heavy workload." The old version of this script could
+# not answer it — it sent a 40-token prompt and generated 768 tokens, tuned
+# nothing to the deployment, and measured a workload nobody runs.
 #
-# Expect autofit ctx to stay IDENTICAL between baseline and draft-mtp for all
-# Gemma rows (confirmed across every report so far) — its sidecar gguf is only
-# ~250-460 MiB, too small to move the KV-cache fit. Qwen has no such sidecar
-# (its MTP head is baked into the target gguf), yet its autofit ctx still
-# *shrinks* under draft-mtp once a quant is already near the 31GiB ceiling
-# (Q6_K_XL, Q8_0) — the speculative-decoding buffers themselves need enough
-# extra VRAM to matter there. If a Gemma row ever shows differing ctx between
-# modes, or a Qwen row shrinks even at small quants, treat it as a signal
-# something changed (llama.cpp fit accounting, sidecar size, etc.), not noise.
+# The workload here is instead reconstructed from the 480 real gpt-oss-20b calls
+# the `psychology` bank recorded in Hindsight's `llm_requests` table, and it
+# does not look like HINDSIGHT.md's "prefill dominates" section claims:
 #
-# llama-bench has no speculative-decoding support, so this drives llama-server
-# directly: boot it with -fit on (to discover how much context fits once the
-# weights + Q8 KV cache are on the GPU), then hit /completion and read
-# `timings` from the JSON response (predicted_per_second, draft_n/accepted).
+#   op             calls  %LLM time  in p50   cached  out p50/avg  concurrency
+#   consolidation   369      53%      5,493    44%     255 / 294    1.06 avg
+#   retain           77      34%      2,365    64%     596 / 611    2.45 avg
+#   reflect          33      13%     14,369     n/r     82 / 446    1.33 avg
+#
+# Retain is small-prompt and generation-heavy, not a 23k-token prefill job;
+# Reflect is the only large-prompt operation and it is 7% of calls. Across the
+# whole recorded mix, uncached prefill is ~430 s of work against ~1,270 s of
+# decode at this machine's rates — decode-dominated, i.e. the regime where MTP
+# can actually pay. That is why the question is worth re-measuring rather than
+# settling from the old Qwen figures (MTP raised decode 109.5 -> 134.1 tok/s
+# while dropping prefill 368.7 -> 312.9).
+#
+# hindsight-load.py drives it, reproducing the rest of the deployment: real
+# system prompts (read from llm_requests, falling back to templates/), strict
+# JSON schemas on Retain and Consolidation, a shared cached system prefix with
+# a freshly generated payload per request, per-operation concurrency from the
+# recorded overlap, and no client-side sampling except Retain's 0.1.
+#
+# Thinking: gpt-oss reasons at effort=low (its native bound, and what Hindsight
+# sends); every other model runs with thinking off, so its capped output budget
+# goes to the answer rather than to reasoning. See NO_THINK below.
+#
+# **Read the `mix, per 100 calls` row.** It weights each profile's burst by that
+# operation's share of recorded calls and is the number the MTP decision turns
+# on. `burst` per profile is the per-operation view; per-request pp/tg are
+# diagnostics. A row where tg goes up and the mix goes up is MTP losing.
+#
+# Each model runs under its own `models-1.ini` preset flags (slots, ctx, batch,
+# KV type, chat template, temp) — an A/B against a model that is not configured
+# the way it is deployed measures nothing.
+#
+# Only Qwen 3.6 is A/B'd. It bakes its MTP head into the main gguf
+# (qwen35.nextn_predict_layers), so --spec-type draft-mtp alone runs it against
+# the target model itself. The other two run baseline-only:
+#   - gpt-oss-20b, the deployed Hindsight LLM, has no MTP head and no sidecar
+#     draft. It is here as the reference the alternates have to beat.
+#   - Gemma 4 does ship an MTP head as a separate small "gemma4-assistant" gguf,
+#     but it is not measured here. models-1.ini records the dense 31B at 6.5x
+#     slower prefill and 6.7x slower decode than gpt-oss at Hindsight's prompt
+#     sizes (Retain 41.8 s end to end against 4.3 s) — a gap no draft depth
+#     closes. Gemma stays as a baseline reference row only. To measure it
+#     again, put the sidecar path back in the draft field of its MODELS entry.
+#
+# NOTE ON MEASUREMENT HYGIENE: an unloaded card is not an idle test bed. Stop
+# cicero-home-ai.service and hindsight.service first — the script warns if they
+# are up, and prints GTT before each run, since a large GTT spill (not VRAM) is
+# what silently halved throughput in earlier contaminated runs. This bench also
+# runs the LLM alone on the card, while production shares GPU1 with the
+# resident reranker; absolute numbers are therefore optimistic, the A/B is not.
 #
 # Usage: ./bench-mtp.sh [model-substring]
 #   model-substring   only run models whose label contains this (case-insensitive)
 #
 # Env overrides:
-#   BENCH_SERVER, DEVICE, FIT_TARGET_MIB, CTK, CTV, N_PREDICT, REPEATS,
-#   SPEC_DRAFT_N_MAX, PORT, REPORTS_DIR, OUTFILE
+#   BENCH_SERVER, DEVICE, FIT_TARGET_MIB, PROFILES, CONCURRENCY, REPEATS,
+#   WARMUP, SPEC_DRAFT_N_MAX, EXTRA_SERVER_FLAGS, PORT, REPORTS_DIR, OUTFILE
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,61 +76,83 @@ cd "$SCRIPT_DIR"
 
 LLAMA_DIR="$SCRIPT_DIR/../llama.cpp"
 MODELS_DIR="$SCRIPT_DIR/../models"
+TEMPLATES_DIR="$SCRIPT_DIR/../templates"
+LOADER="$SCRIPT_DIR/hindsight-load.py"
 
 BENCH_SERVER="${BENCH_SERVER:-$LLAMA_DIR/llama-server}"
-DEVICE="${DEVICE:-Vulkan0}"
-FIT_TARGET_MIB="${FIT_TARGET_MIB:-256}"   # VRAM margin left free per device, see -fitt
-CTK="${CTK:-q8_0}"
-CTV="${CTV:-q8_0}"
-N_PREDICT="${N_PREDICT:-768}"  # 256*3
+DEVICE="${DEVICE:-Vulkan1}"          # Hindsight's card
+FIT_TARGET_MIB="${FIT_TARGET_MIB:-256}"   # matches models-1.ini fit-target
+PROFILES="${PROFILES:-retain consolidate reflect}"   # also available: reflect-long (p90)
+# Empty = each profile uses its own measured average overlap (1 / 2 / 1). Set
+# it to 3 to study the saturated case (HINDSIGHT_API_LLM_MAX_CONCURRENT); the
+# mix row stays comparable because it divides the burst by the concurrency.
+CONCURRENCY="${CONCURRENCY:-}"
 REPEATS="${REPEATS:-3}"
-SPEC_DRAFT_N_MAX="${SPEC_DRAFT_N_MAX:-2}"  # number of tokens to draft ahead per MTP step
+WARMUP="${WARMUP:-1}"
+SPEC_DRAFT_N_MAX="${SPEC_DRAFT_N_MAX:-2}"  # tokens drafted ahead per MTP step
+EXTRA_SERVER_FLAGS="${EXTRA_SERVER_FLAGS:-}"
 PORT="${PORT:-8099}"
 REPORTS_DIR="${REPORTS_DIR:-reports}"
 OUTFILE="${OUTFILE:-$REPORTS_DIR/bench-mtp-$(date +%Y%m%d-%H%M%S).md}"
 FILTER="${1:-}"
 
-PROMPT='Write a detailed paragraph about the history of the Roman Empire, covering its founding, expansion, and eventual fall. Then explain three lasting influences it had on modern law and government.'
-
-# Per-family recommended sampling (matches models-*.ini presets) — greedy
-# (temperature 0, no repeat penalty) reliably drives long unpenalized
-# generations into repetition loops, which some model/quant combos escape
-# differently under batched draft-verification than under plain sequential
-# decode, producing spurious pass/fail deltas that have nothing to do with
-# MTP itself. Sampling stochastically like real usage avoids that.
-QWEN_SAMPLING='"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.00, "repeat_penalty": 1.0, "presence_penalty": 0'
-GEMMA_SAMPLING='"temperature": 1.0, "top_p": 0.95, "top_k": 64, "min_p": 0.00, "repeat_penalty": 1.0, "presence_penalty": 0'
+# Hindsight's HINDSIGHT_API_LLM_EXTRA_BODY. reasoning_effort is gpt-oss's own
+# output-bounding mechanism and reaches the harmony template only through
+# chat_template_kwargs; it is a no-op for the other models, which is correct —
+# Hindsight sends it to all of them.
+LLM_EXTRA_BODY_DEFAULT='{"chat_template_kwargs":{"reasoning_effort":"low"}}'
+LLM_EXTRA_BODY="${LLM_EXTRA_BODY:-$LLM_EXTRA_BODY_DEFAULT}"
 
 if [[ ! -x "$BENCH_SERVER" ]]; then
     echo "Error: $BENCH_SERVER not found. Run ../build.sh first." >&2
     exit 1
 fi
+if [[ ! -f "$LOADER" ]]; then
+    echo "Error: $LOADER not found." >&2
+    exit 1
+fi
 
 mkdir -p "$REPORTS_DIR"
 
-# label|model_path|draft_path (draft_path empty = MTP head is baked into model_path)
-GEMMA_MTP="$MODELS_DIR/Gemma4-31B/MTP/mtp-gemma-4-31B-it-Q8_0.gguf"
-GEMMA_QAT_MTP="$MODELS_DIR/Gemma4-31B-QAT/MTP/mtp-gemma-4-31B-it-Q8_0.gguf"
-GEMMA_MOE_MTP="$MODELS_DIR/Gemma4-26B-A4B/mtp-gemma-4-26B-A4B-it.gguf"
-GEMMA_MOE_QAT_MTP="$MODELS_DIR/Gemma4-26B-A4B-QAT/mtp-gemma-4-26B-A4B-it.gguf"
+# Thinking policy, and the one place this bench deliberately departs from the
+# presets. gpt-oss reasons at effort=low — it cannot be switched off, low is
+# its native output bound, it is what Hindsight sends, and HINDSIGHT.md records
+# that raising it is net worse end to end. It rides in LLM_EXTRA_BODY above.
+#
+# Every other model has thinking turned OFF here. `-rea off` sets
+# enable_thinking=false as a default template kwarg (common/arg.cpp), which:
+#   - Qwen 3.6 honours — its template is `enable_thinking is defined and is
+#     false`, i.e. thinking is ON by default, so without this Qwen would spend
+#     most of its capped output budget on reasoning instead of the answer;
+#   - Gemma 4 already defaults to (`enable_thinking | default(false)`), so the
+#     flag only makes the intent explicit there.
+# Note this is a bench-only choice: Hindsight sends no enable_thinking, so a
+# Qwen deployed as its LLM would think. Drop `$NO_THINK` from a model's flags
+# to measure that instead.
+NO_THINK="-rea off"
+
+# label|model|draft|server_flags
+# server_flags otherwise mirror each model's models-1.ini preset. Anything
+# omitted there (batch/ubatch on the Gemma dense model, for instance) is
+# deliberately omitted here too — measured net-negative, see the preset comments.
+GPTOSS_FLAGS="-np 3 -c 300000 -b 4096 -ub 2048 -ctk f16 -ctv f16 --temp 0.2 --chat-template-file $TEMPLATES_DIR/gpt-oss-20b-harmony.jinja"
+GEMMA31_FLAGS="-np 2 -c 200000 -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --presence-penalty 0 $NO_THINK"
+GEMMA26_FLAGS="-np 3 -c 300000 -ctk f16 -ctv f16 --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --presence-penalty 0 $NO_THINK"
+QWEN27_FLAGS="-np 2 -c 200000 -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 0 $NO_THINK"
+QWEN35_FLAGS="-np 3 -c 300000 -ctk f16 -ctv f16 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 0 $NO_THINK"
 
 MODELS=(
-    "Qwen 3.6 27B · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q4_K_XL.gguf|"
-    "Qwen 3.6 27B · UD-Q5_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q5_K_XL.gguf|"
-    "Qwen 3.6 27B · UD-Q6_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q6_K_XL.gguf|"
-    "Qwen 3.6 27B · Q6_K|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q6_K.gguf|"
-    "Qwen 3.6 27B · Q8_0|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q8_0.gguf|"
-    "Qwen 3.6 35B-A3B · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf|"
-    "Qwen 3.6 35B-A3B · UD-Q5_K_S|$MODELS_DIR/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-Q5_K_S.gguf|"
-    "Qwen 3.6 35B-A3B · UD-Q5_K_XL|$MODELS_DIR/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf|"
-    "Gemma 4 31B QAT · UD-Q4_K_XL|$MODELS_DIR/Gemma4-31B-QAT/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf|$GEMMA_QAT_MTP"
-    "Gemma 4 31B · UD-Q5_K_XL|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-UD-Q5_K_XL.gguf|$GEMMA_MTP"
-    "Gemma 4 31B · Q6_K|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-Q6_K.gguf|$GEMMA_MTP"
-    "Gemma 4 31B · UD-Q6_K_XL|$MODELS_DIR/Gemma4-31B/gemma-4-31B-it-UD-Q6_K_XL.gguf|$GEMMA_MTP"
-    "Gemma 4 26B-A4B QAT · UD-Q4_K_XL|$MODELS_DIR/Gemma4-26B-A4B-QAT/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf|$GEMMA_MOE_QAT_MTP"
-    "Gemma 4 26B-A4B · UD-Q5_K_XL|$MODELS_DIR/Gemma4-26B-A4B/gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf|$GEMMA_MOE_MTP"
-    "Gemma 4 26B-A4B · UD-Q6_K_XL|$MODELS_DIR/Gemma4-26B-A4B/gemma-4-26B-A4B-it-UD-Q6_K_XL.gguf|$GEMMA_MOE_MTP"
+    "gpt-oss-20b · UD-Q8_K_XL (deployed, baseline only)|$MODELS_DIR/GPT-OSS-20B/gpt-oss-20b-UD-Q8_K_XL.gguf||$GPTOSS_FLAGS"
+    "gemma4-31b-qat · UD-Q4_K_XL (baseline only)|$MODELS_DIR/Gemma4-31B-QAT/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf||$GEMMA31_FLAGS"
+    "gemma4-26b-a4b-qat · UD-Q4_K_XL (baseline only)|$MODELS_DIR/Gemma4-26B-A4B-QAT/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf||$GEMMA26_FLAGS"
+    "qwen3.6-27b · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q4_K_XL.gguf||$QWEN27_FLAGS"
+    "qwen3.6-35b-a3b · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf||$QWEN35_FLAGS"
 )
+
+# Models whose MTP head is baked into the main gguf: no -md, but they still
+# support --spec-type draft-mtp. Anything else with an empty draft field runs
+# baseline-only — gpt-oss-20b because it has no head, Gemma by choice.
+has_baked_mtp() { [[ "$1" == qwen3.6-* ]]; }
 
 SERVER_PID=""
 SERVER_LOG=""
@@ -110,18 +169,51 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# start_server MODEL SPEC_FLAGS -> sets SERVER_PID, SERVER_LOG, FIT_CTX
+gtt_used() {
+    local total=0 used
+    for f in /sys/class/drm/card*/device/mem_info_gtt_used; do
+        [[ -r "$f" ]] || continue
+        read -r used < "$f"
+        total=$((total + used))
+    done
+    awk -v b="$total" 'BEGIN{printf "%.2f GiB", b/1073741824}'
+}
+
+preflight() {
+    local busy=()
+    for svc in cicero-home-ai.service hindsight.service; do
+        systemctl is-active --quiet "$svc" 2>/dev/null && busy+=("$svc")
+    done
+    if [[ ${#busy[@]} -gt 0 ]]; then
+        echo "WARNING: ${busy[*]} still running — the cards are not idle and these"
+        echo "         numbers will not be comparable to earlier reports. Stop them first."
+        echo
+    fi
+    echo "GTT in use before first load: $(gtt_used)"
+    echo
+}
+
+# start_server MODEL SERVER_FLAGS SPEC_FLAGS -> sets SERVER_PID, SERVER_LOG, FIT_CTX
 start_server() {
-    local model="$1"
-    local spec_flags="$2"
+    local model="$1" preset_flags="$2" spec_flags="$3"
 
     SERVER_LOG="$(mktemp)"
-    # shellcheck disable=SC2086
+    # Everything models-1.ini puts in [*], plus the two flags every model
+    # section sets. --cache-ram -1 is not cosmetic: llama.cpp defaults to an
+    # 8192 MiB prompt cache, and this workload leans on the host-RAM cache to
+    # keep the Retain and Consolidation system prefixes alive while the two
+    # alternate on the same slot (see README.md). --repeat-penalty 1.0 matches
+    # llama.cpp's own default but is stated explicitly per CLAUDE.md, and
+    # because llama.cpp's gpt-oss guide is emphatic that penalties break it.
+    # kv-unified is left unset in both places: it defaults on only when the
+    # slot count is auto, and -np is always explicit here.
+    # shellcheck disable=SC2086 — flags are intentionally word-split
     "$BENCH_SERVER" \
         -m "$model" \
-        $spec_flags \
-        -ngl 99 -fa on -dev "$DEVICE" -np 1 \
-        -fit on -fitt "$FIT_TARGET_MIB" -ctk "$CTK" -ctv "$CTV" \
+        $preset_flags $spec_flags $EXTRA_SERVER_FLAGS \
+        -ngl 99 -fa on -dev "$DEVICE" --jinja --no-mmap --cont-batching \
+        --cache-ram -1 --repeat-penalty 1.0 \
+        -fit on -fitt "$FIT_TARGET_MIB" \
         --port "$PORT" > "$SERVER_LOG" 2>&1 &
     SERVER_PID=$!
 
@@ -134,7 +226,7 @@ start_server() {
         fi
         sleep 1
         waited=$((waited + 1))
-        if [[ $waited -ge 120 ]]; then
+        if [[ $waited -ge 180 ]]; then
             echo "Error: server did not become healthy within ${waited}s" >&2
             return 1
         fi
@@ -153,63 +245,52 @@ stop_server() {
     SERVER_LOG=""
 }
 
-# run_completion -> tab-separated: prompt_tps  predicted_tps  draft_n  draft_accepted
-run_completion() {
-    curl -s "http://127.0.0.1:$PORT/completion" \
-        -H "Content-Type: application/json" \
-        -d "{\"prompt\": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$PROMPT"), \"n_predict\": $N_PREDICT, $sampling_params, \"cache_prompt\": false}" \
-    | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-t = d.get("timings", {})
-pp = t.get("prompt_per_second", 0)
-tg = t.get("predicted_per_second", 0)
-dn = t.get("draft_n", 0)
-da = t.get("draft_n_accepted", 0)
-print(f"{pp:.2f}\t{tg:.2f}\t{dn}\t{da}")
-'
-}
-
-# bench_mode LABEL SPEC_FLAGS -> appends a markdown row to $rows_file, returns ctx via stdout
+# bench_mode MODE_LABEL SPEC_FLAGS — one server boot, every profile through it
 bench_mode() {
-    local label="$1"
-    local spec_flags="$2"
+    local mode="$1" spec_flags="$2"
 
-    start_server "$model_path" "$spec_flags" || { stop_server; return 1; }
-    local ctx="$FIT_CTX"
+    if ! start_server "$model_path" "$preset_flags" "$spec_flags"; then
+        stop_server
+        for profile in $PROFILES; do
+            echo "| $profile | $mode | SERVER FAILED | - | - | - | - | - | - | - |" >> "$rows_file"
+        done
+        return 1
+    fi
+    echo "   n_ctx_slot=$FIT_CTX  GTT=$(gtt_used)"
 
-    # warmup (JIT-load KV cache, tensor caches, etc.)
-    run_completion > /dev/null || true
-
-    local pp_sum=0 tg_sum=0 draft_n_sum=0 draft_acc_sum=0
-    for ((i = 0; i < REPEATS; i++)); do
-        local line pp tg dn da
-        line=$(run_completion || true)
-        [[ -z "$line" ]] && line=$'0.00\t0.00\t0\t0'
-        pp=$(echo "$line" | cut -f1)
-        tg=$(echo "$line" | cut -f2)
-        dn=$(echo "$line" | cut -f3)
-        da=$(echo "$line" | cut -f4)
-        pp_sum=$(python3 -c "print($pp_sum + $pp)")
-        tg_sum=$(python3 -c "print($tg_sum + $tg)")
-        draft_n_sum=$((draft_n_sum + dn))
-        draft_acc_sum=$((draft_acc_sum + da))
+    local mix_acc=0 share_acc=0
+    for profile in $PROFILES; do
+        local line mode_note conc_flag=()
+        [[ -n "$CONCURRENCY" ]] && conc_flag=(--concurrency "$CONCURRENCY")
+        line=$(python3 "$LOADER" --profile "$profile" --port "$PORT" "${conc_flag[@]}" \
+                   --repeats "$REPEATS" --warmup "$WARMUP" \
+                   --templates-dir "$TEMPLATES_DIR" --extra-body "$LLM_EXTRA_BODY" || true)
+        if [[ -z "$line" ]]; then
+            echo "| $profile | $mode | FAILED | - | - | - | - | - | - | - |" >> "$rows_file"
+            continue
+        fi
+        # prompt_n cache_n pp tg predicted_n burst_wall agg_pp accept errors conc share
+        IFS=$'\t' read -r p_n c_n pp tg gen wall agg accept errs conc share <<< "$line"
+        [[ "${errs:-0}" != "0" ]] && mode_note="$mode (${errs} err)" || mode_note="$mode"
+        echo "| $profile | $mode_note | ${p_n}+${c_n} | $pp | $agg | $tg | $gen | ${conc} | **$wall** | $accept |" \
+            >> "$rows_file"
+        # Seconds of LLM time per 100 calls of the recorded operation mix: the
+        # single number the MTP decision turns on. wall covers `conc` requests.
+        mix_acc=$(python3 -c "print(f'{$mix_acc + 100.0 * $share * $wall / $conc:.2f}')")
+        share_acc=$(python3 -c "print(f'{$share_acc + $share:.2f}')")
     done
-    stop_server
 
-    local pp_avg tg_avg accept
-    pp_avg=$(python3 -c "print(f'{$pp_sum / $REPEATS:.2f}')")
-    tg_avg=$(python3 -c "print(f'{$tg_sum / $REPEATS:.2f}')")
-    if [[ "$draft_n_sum" -gt 0 ]]; then
-        accept=$(python3 -c "print(f'{100.0 * $draft_acc_sum / $draft_n_sum:.1f}%')")
-    else
-        accept="n/a"
+    # The decision row: extrapolated LLM seconds per 100 Hindsight calls at the
+    # recorded operation mix (77% consolidation / 16% retain / 7% reflect).
+    # Meaningful only if the profiles that ran cover most of that mix.
+    if [[ "$(python3 -c "print(1 if $share_acc >= 0.9 else 0)")" == "1" ]]; then
+        echo "| **mix, per 100 calls** | $mode | - | - | - | - | - | - | **${mix_acc}s** | - |" \
+            >> "$rows_file"
     fi
 
-    echo "| $label | $ctx | $pp_avg | $tg_avg | $accept |" >> "$rows_file"
+    stop_server
 }
 
-# --- System info header (same shape as bench.sh) ---
 write_system_info() {
     local kernel ram llama_ver devices_info gpu_lines
 
@@ -227,7 +308,7 @@ write_system_info() {
     llama_ver=$(git -C "$LLAMA_DIR" log -1 --format="%h (%cd)" --date=short 2>/dev/null || echo "N/A")
 
     {
-        echo "# MTP Benchmark Report — $(date)"
+        echo "# MTP Benchmark Report (Hindsight workload) — $(date)"
         echo
         echo "## System Info"
         echo
@@ -238,42 +319,44 @@ write_system_info() {
         echo "| **Kernel** | $kernel |"
         echo "| **llama.cpp** | $llama_ver |"
         echo "| **Backend** | Vulkan ($DEVICE) |"
-        echo "| **KV cache** | K=$CTK, V=$CTV |"
-        echo "| **fit target margin** | ${FIT_TARGET_MIB} MiB free |"
-        echo "| **n_predict / repeats** | $N_PREDICT / $REPEATS |"
+        echo "| **Workload** | psychology-bank shape: $PROFILES |"
+        echo "| **Concurrency** | ${CONCURRENCY:-per profile, from recorded overlap} |"
+        echo "| **warmup / repeats** | $WARMUP / $REPEATS bursts |"
         echo "| **spec-draft-n-max** | $SPEC_DRAFT_N_MAX |"
+        echo "| **KV / batch / slots** | per model, from models-1.ini |"
+        echo "| **extra body** | \`$LLM_EXTRA_BODY\` |"
+        echo "| **thinking** | gpt-oss: effort=low; all others: \`$NO_THINK\` |"
+        echo
+        echo "Prompt sizes, output lengths, cache-hit shares and concurrency are"
+        echo "derived from 480 recorded \`llm_requests\` rows of the \`psychology\`"
+        echo "bank. \`burst\` is the wall time of one concurrent round; the"
+        echo "\`mix, per 100 calls\` row weights those by operation share and is"
+        echo "the figure that maps to Hindsight's LLM time. Error counts include"
+        echo "the warm-up burst, which is excluded from every timing."
         echo
     } | tee "$OUTFILE"
 }
 
-echo "=== MTP bench (Vulkan, $DEVICE) — $(date) ==="
+echo "=== MTP bench on the Hindsight workload (Vulkan, $DEVICE) — $(date) ==="
 echo "Saving to: $OUTFILE"
 echo
-
+preflight
 write_system_info
 
 for entry in "${MODELS[@]}"; do
-    IFS='|' read -r label model_path draft_path <<< "$entry"
+    IFS='|' read -r label model_path draft_path preset_flags <<< "$entry"
 
     if [[ -n "$FILTER" ]] && [[ "${label,,}" != *"${FILTER,,}"* ]]; then
         continue
     fi
-
     if [[ ! -f "$model_path" ]]; then
         echo "Skipping missing model: $model_path" | tee -a "$OUTFILE"
         continue
     fi
-
     if [[ -n "$draft_path" && ! -f "$draft_path" ]]; then
         echo "Skipping $label: MTP draft not found: $draft_path" | tee -a "$OUTFILE"
         continue
     fi
-
-    sampling_params="$QWEN_SAMPLING"
-    [[ "$label" == Gemma* ]] && sampling_params="$GEMMA_SAMPLING"
-
-    mtp_flags="--spec-type draft-mtp --spec-draft-n-max $SPEC_DRAFT_N_MAX"
-    [[ -n "$draft_path" ]] && mtp_flags="$mtp_flags -md $draft_path"
 
     echo
     echo "## $label"
@@ -281,16 +364,27 @@ for entry in "${MODELS[@]}"; do
         echo
         echo "## $label"
         echo
-        echo "| mode | autofit ctx | pp t/s | tg t/s | MTP accept rate |"
-        echo "|---|---:|---:|---:|---:|"
+        echo "\`$preset_flags\`"
+        echo
+        echo "| profile | mode | prompt tok (new+cached) | pp t/s | agg pp t/s | tg t/s | gen tok | conc | burst | MTP accept |"
+        echo "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"
     } >> "$OUTFILE"
     : > "$rows_file"
 
     echo "-- baseline (no spec) --"
-    bench_mode "baseline" "" || echo "| baseline | FAILED | - | - | - |" >> "$rows_file"
+    bench_mode "baseline" "" || true
 
-    echo "-- draft-mtp --"
-    bench_mode "draft-mtp" "$mtp_flags" || echo "| draft-mtp | FAILED | - | - | - |" >> "$rows_file"
+    if [[ -n "$draft_path" ]] || has_baked_mtp "$label"; then
+        mtp_flags="--spec-type draft-mtp --spec-draft-n-max $SPEC_DRAFT_N_MAX"
+        [[ -n "$draft_path" ]] && mtp_flags="$mtp_flags -md $draft_path"
+        echo "-- draft-mtp --"
+        bench_mode "draft-mtp" "$mtp_flags" || true
+    else
+        echo "-- draft-mtp: not measured for this model --"
+        for profile in $PROFILES; do
+            echo "| $profile | draft-mtp | not measured | - | - | - | - | - | - | - |" >> "$rows_file"
+        done
+    fi
 
     cat "$rows_file" | tee -a "$OUTFILE"
     echo >> "$OUTFILE"

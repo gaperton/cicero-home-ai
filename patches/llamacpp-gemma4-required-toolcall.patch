@@ -1,0 +1,34 @@
+diff --git a/common/chat.cpp b/common/chat.cpp
+index d2ff2a1be..53ee967fb 100644
+--- a/common/chat.cpp
++++ b/common/chat.cpp
+@@ -1569,6 +1569,29 @@ static common_chat_params common_chat_params_init_gemma4(const common_chat_templ
+             auto scan_to_toolcall = p.rule("scan-to-toolcall", p.until("<|tool_call>"));
+             auto content = p.rule("content", p.content(p.until_one_of({"<|channel>", "<channel|>", "<|tool_call>"})));
+             auto message = p.rule("message", thought + content);
++
++            if (inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED) {
++                // A tool call is mandatory here (tool_call has min = 1), so EOS is
++                // never in the allowed token set until one is emitted. Combined with
++                // the unbounded `scan_to_toolcall` (`until("<|tool_call>")`) and the
++                // unbounded `content` rule, that gives the model an infinite legal
++                // path: it may emit free-form prose forever and can never stop.
++                //
++                // Models that answer instead of complying with the forced turn fall
++                // into exactly that hole and never terminate. Observed with Gemma 4
++                // 26B-A4B driving Hindsight's Reflect, which forces a retrieval tool
++                // on early iterations: generation ran past 47k tokens with no EOS,
++                // degenerating into single-token repetition, and kept decoding after
++                // the client timed out. gpt-oss is unaffected only because it happens
++                // to comply.
++                //
++                // When a tool call is required, don't offer the free-content path at
++                // all: allow the optional thought block, then require the tool call.
++                // This makes the grammar match the stated intent of "required" and
++                // removes the non-terminating branch.
++                return start + p.optional(thought) + tool_call;
++            }
++
+             return start + p.zero_or_more(message) + scan_to_toolcall + tool_call;
+         }
+ 
