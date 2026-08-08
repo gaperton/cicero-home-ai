@@ -605,9 +605,9 @@ special-cases `REQUIRED` too. The gemma4 parser is the outlier that does not.
 **A local patch fixes the grammar bug — but NOT all of the hangs.** Removing the
 free-content branch from the gemma4 grammar when a tool call is required (mirroring
 what gpt-oss already does) lives in
-`patches/llamacpp-gemma4-required-toolcall.patch`, is re-applied automatically by
+`patches/gemma4-required-toolcall/llama-cpp.patch`, is re-applied automatically by
 `build.sh`, and has an upstream writeup in
-`llamacpp-gemma4-required-toolcall-PR.md`. It makes the captured request terminate
+`patches/gemma4-required-toolcall/README.md`. It makes the captured request terminate
 in 9.7 s with `finish_reason=tool_calls`, and takes `psychology` Reflect from 0/3
 probes passing to 2/3.
 

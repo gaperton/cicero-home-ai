@@ -30,7 +30,7 @@ again, you know which two things to check first.
 Gemma's Reflect does not terminate without both. Each was measured
 independently; neither is optional.
 
-### 1. `patches/llamacpp-gemma4-required-toolcall.patch`
+### 1. `patches/gemma4-required-toolcall/llama-cpp.patch`
 
 Applied to `llama.cpp/common/chat.cpp`, re-applied automatically by `build.sh`.
 

@@ -14,19 +14,23 @@ TARGETS="llama-cli llama-mtmd-cli llama-server llama-gguf-split llama-bench"
 LLAMA_DIR="$SCRIPT_DIR/llama.cpp"
 PATCH_DIR="$SCRIPT_DIR/patches"
 
-# Re-apply every patches/llamacpp-*.patch to the freshly pulled tree.
+# Re-apply every local llama.cpp patch to the freshly pulled tree.
+#
+# One directory per upstream change: patches/<topic>/llama-cpp.patch alongside a
+# README.md explaining and justifying it, so a patch and its rationale cannot
+# drift apart.
 #
 # Three outcomes per patch, and the third one matters:
 #   applies cleanly   -> apply it
 #   already applied   -> skip (reverse-check succeeds)
-#   neither           -> STOP. Either the fix landed upstream (delete the patch)
+#   neither           -> STOP. Either the fix landed upstream (delete the folder)
 #                        or upstream moved and it needs rebasing. Building on
 #                        regardless would quietly ship a binary without the fix,
 #                        and these patches exist because the unpatched behaviour
 #                        is a hang, not a cosmetic difference.
 apply_patches() {
     shopt -s nullglob
-    local patches=("$PATCH_DIR"/llamacpp-*.patch)
+    local patches=("$PATCH_DIR"/*/*.patch)
     shopt -u nullglob
 
     if [ ${#patches[@]} -eq 0 ]; then
@@ -36,7 +40,7 @@ apply_patches() {
 
     local p name
     for p in "${patches[@]}"; do
-        name="$(basename "$p")"
+        name="$(basename "$(dirname "$p")")/$(basename "$p")"
         if git -C "$LLAMA_DIR" apply --check "$p" 2>/dev/null; then
             git -C "$LLAMA_DIR" apply "$p"
             echo "build.sh: applied $name"
@@ -44,7 +48,7 @@ apply_patches() {
             echo "build.sh: $name already applied, skipping"
         else
             echo "build.sh: ERROR — $name no longer applies to llama.cpp@$(git -C "$LLAMA_DIR" rev-parse --short HEAD)" >&2
-            echo "  If the fix landed upstream, delete patches/$name." >&2
+            echo "  If the fix landed upstream, delete patches/$(dirname "$name")/." >&2
             echo "  Otherwise rebase it against the new tree. Refusing to build without it." >&2
             return 1
         fi
