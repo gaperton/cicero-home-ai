@@ -138,7 +138,7 @@ Do not change the embedding model casually after storing real data.
 Hindsight uses the secondary llama.cpp router so it does not contend with the primary endpoint:
 
 - Endpoint: `http://127.0.0.1:8081/v1`
-- Model: `gpt-oss-20b` — Hindsight's own strongest official local recommendation. It replaced `gemma4-26b-a4b`, whose tool-call path never terminates on a real bank. Re-tested and re-confirmed 2026-08-06; see "Gemma 4 retest and final rejection" below.
+- Model: `gpt-oss-20b` — Hindsight's own strongest official local recommendation, and the faster of the two working profiles (Reflect 22-30 s vs Gemma's 68-83 s). `gemma4-26b-a4b-qat` also works as of 2026-08-08 once its two mitigations are in place; see "Gemma 4: rejection, root cause, and fix" below and `notes/hindsight-gemma.md`.
 - Quantization: `UD-Q8_K_XL`
 - Hindsight LLM concurrency: 3 (`HINDSIGHT_API_LLM_MAX_CONCURRENT=3`) — matches the router's 3 slots exactly. The per-operation override vars (`HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `..._REFLECT_...`, `..._CONSOLIDATION_...`) exist in the Hindsight codebase but are unset here, so every LLM call (Retain, Reflect, Consolidation) shares the single global semaphore of 3 — there is no way for Hindsight to oversubscribe the slots.
 - Router slots: 3; `ctx-size = 300000` (100,000 tokens/slot)
@@ -504,7 +504,16 @@ Recall is ~3x faster and the head of the ranking is nearly unchanged — top-3 i
 
 Also noted but not changed: Hindsight's docs suggest `HINDSIGHT_API_LLM_MAX_CONCURRENT=2` for local use and "leave at least one slot free per shared client". This deployment runs 3 against `parallel = 3`, so Hindsight can saturate the router. That is deliberate, but `:8081` does serve other clients, and a concurrent writer was observed during benchmarking — if the Hermes agent starts contending for slots, drop this to 2.
 
-### Gemma 4 retest and final rejection (2026-08-06)
+### Gemma 4: rejection, root cause, and fix (2026-08-06 → 08-08)
+
+**Outcome first.** Gemma was rejected on 2026-08-06 because Reflect never
+terminated on a real bank. The cause was found, fixed, and validated on
+2026-08-08: **40/40 Reflects on `psychology` with zero hangs**, e2e 3/3 on every
+probe, and zero calls anywhere near the `n-predict` backstop. It needs two
+mitigations, both in place — the llama.cpp patch in `patches/` and
+`reasoning-budget` in `models-1-gemma.ini`. gpt-oss remains production purely on
+speed. Setup: `notes/hindsight-gemma.md`. The investigation below is kept because
+several plausible-but-wrong diagnoses are recorded in it.
 
 `gemma4-26b-a4b-qat` was re-tried as the Hindsight LLM and reverted the same day.
 It is now an on-demand-only preset in `models-1.ini`. Do not promote it again
@@ -616,11 +625,11 @@ It is **intermittent**: the same query then succeeded 5 times running (81-86 s).
 Roughly 1 failure in 12 psychology Reflects post-patch (~8%), against 100% before.
 Each failure still wedges a slot until the router restarts.
 
-**So gemma stays a non-production profile.** ~8% of Reflects hanging and costing a
-slot is not acceptable for the primary Hindsight LLM, and gpt-oss does the same
-work 2-3x faster (Reflect 22-30 s vs 68-86 s). On the same patched binary gpt-oss
-e2e is 3/3 on every probe with no errors, so the patch causes no regression there —
-as expected, since it only touches the gemma4 parser.
+**Resolved by `reasoning-budget`** — see the section below. The residual ~8% was
+the unbounded thought rule; bounding thinking at the sampler took it to zero
+without removing the capability. gpt-oss stays production on speed alone
+(Reflect 22-30 s vs 68-83 s), and its e2e on the same patched binary is 3/3 with
+no errors, as expected since the patch only touches the gemma4 parser.
 
 **Probable root cause is the model, not llama.cpp** (consistent with the above but
 not locally confirmed). google-deepmind/gemma#622 documents
@@ -671,7 +680,23 @@ and the gpt-oss preset are a pair; the variable is inert for Gemma and was unset
 during the retest. Verified after revert: `psychology` Reflect returned a coherent
 2474-character answer in 34.2s.
 
-### The second Gemma defect, isolated (2026-08-07)
+### The second Gemma defect, isolated and fixed (2026-08-07 → 08-08)
+
+**Fixed by `reasoning-budget = 1024`.** The runaway lived in the thought rule,
+`p.reasoning(p.until("<channel|>"))` — unbounded, with EOS locked out until the
+mandatory tool call. Bounding thinking at the sampler forces the closing tag,
+after which the grammar requires the call. Single-variable measurement on 120
+replays of a captured production request: **5/120 hangs without it, 0/120 with
+it**, thinking still used on 9/120 completions. End to end: 40/40 Reflects on
+`psychology`, and **zero calls near the `n-predict` cap**, so the budget contains
+the degeneration rather than the cap masking it.
+
+Preferred over patching the thought out of the grammar, which was built and
+measured (also 0/120) then discarded: it removes a real capability, and is
+stricter than `common_chat_params_init_gpt_oss`, whose required-turn branch still
+permits `analysis` blocks. Config beats a patch that must be rebased forever.
+
+The investigation below is kept for the ruled-out table.
 
 The hang that survived the llama.cpp grammar patch was tracked to root cause by
 capturing the failing request off the wire and replaying it. Everything below is

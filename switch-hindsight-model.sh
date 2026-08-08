@@ -3,7 +3,7 @@
 # profiles, flipping the router preset and the Hindsight env file together.
 #
 #   ./switch-hindsight-model.sh oss     # gpt-oss-20b  — production, all operations
-#   ./switch-hindsight-model.sh gemma   # gemma4-26b-a4b-qat — REFLECT HANGS
+#   ./switch-hindsight-model.sh gemma   # gemma4-26b-a4b-qat — slower, also fine
 #   ./switch-hindsight-model.sh status  # show what is currently active
 #
 # Two things must agree or the router thrashes, which is the whole reason this
@@ -83,10 +83,10 @@ echo "profile: ${1}  (models-1.ini -> $preset, hindsight.env -> $envfile)"
 if (( warn )); then
     cat >&2 <<'EOF'
 
-WARNING: Reflect does not terminate under the gemma profile. It runs to the
-300s timeout and leaves a router slot wedged until the next restart. Retain and
-Consolidation are verified good. Use this profile for ingestion-only work.
-See the banner in models-1-gemma.ini and HINDSIGHT.md.
+NOTE: the gemma profile depends on two mitigations for Reflect to terminate --
+the llama.cpp patch in patches/ (re-applied by build.sh) and reasoning-budget in
+models-1-gemma.ini. Both are in place; validated 40/40 Reflects on `psychology`.
+It is 2-3x slower than gpt-oss (Reflect 68-83s vs 22-30s).
 EOF
 fi
 
