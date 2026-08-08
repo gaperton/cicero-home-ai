@@ -1,43 +1,16 @@
 diff --git a/common/chat.cpp b/common/chat.cpp
-index d2ff2a1be..8dc2a03b9 100644
+index d2ff2a1be..4973768d4 100644
 --- a/common/chat.cpp
 +++ b/common/chat.cpp
-@@ -1569,6 +1569,41 @@ static common_chat_params common_chat_params_init_gemma4(const common_chat_templ
+@@ -1569,6 +1569,14 @@ static common_chat_params common_chat_params_init_gemma4(const common_chat_templ
              auto scan_to_toolcall = p.rule("scan-to-toolcall", p.until("<|tool_call>"));
              auto content = p.rule("content", p.content(p.until_one_of({"<|channel>", "<channel|>", "<|tool_call>"})));
              auto message = p.rule("message", thought + content);
 +
 +            if (inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED) {
-+                // A tool call is mandatory here (tool_call has min = 1), so EOS is
-+                // never in the allowed token set until one is emitted. Combined with
-+                // the unbounded `scan_to_toolcall` (`until("<|tool_call>")`) and the
-+                // unbounded `content` rule, that gives the model an infinite legal
-+                // path: it may emit free-form prose forever and can never stop.
-+                //
-+                // Models that answer instead of complying with the forced turn fall
-+                // into exactly that hole and never terminate. Observed with Gemma 4
-+                // 26B-A4B driving Hindsight's Reflect, which forces a retrieval tool
-+                // on early iterations: generation ran past 47k tokens with no EOS,
-+                // degenerating into single-token repetition, and kept decoding after
-+                // the client timed out. gpt-oss is unaffected only because it happens
-+                // to comply.
-+                //
-+                // When a tool call is required, don't offer the free-content path at
-+                // all: allow the optional thought block, then require the tool call.
-+                // This matches the stated intent of "required" and removes this
-+                // non-terminating branch.
-+                //
-+                // NOTE: the thought block is itself unbounded
-+                // (`p.reasoning(p.until("<channel|>"))`), so a model that opens a
-+                // thought and never closes it can still hang -- measured at 5/120 on a
-+                // replayed real request, every one with the runaway in
-+                // `reasoning_content` (zero content, zero tool args, so the client
-+                // just sees silence). That is deliberately NOT fixed here by removing
-+                // the thought: `--reasoning-budget N` already bounds it at the sampler
-+                // and forces the closing tag, measured 0/120 on the same request while
-+                // still allowing the model to think. Removing the thought instead
-+                // would also be stricter than common_chat_params_init_gpt_oss, which
-+                // still permits `analysis` blocks on required turns.
++                // A tool call is required, so EOS is never allowed until one is emitted.
++                // Don't offer the unbounded content path here or a model that answers
++                // instead of calling can never terminate. Same as gpt_oss and functionary_v3_2.
 +                return start + p.optional(thought) + tool_call;
 +            }
 +
