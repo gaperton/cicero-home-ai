@@ -86,11 +86,10 @@ echo "profile: ${1}  (models-1.ini -> $preset, hindsight.env -> $envfile)"
 if (( warn == 2 )); then
     cat >&2 <<'EOF2'
 
-NOTE: qwen3.6-35b is ALSO the benchmark's default answer+judge model on :8080.
-Running it as the model under test would have it grade its own memories. The
-paired .env.bench-qwen already points answer+judge at gemma4-31b instead -- use
-that profile, and remember its absolute score is not comparable to runs judged
-by qwen.
+NOTE: qwen3.6-35b is ALSO the benchmark's answer+judge model on :8080 (Q5_K_XL
+there, Q4_K_XL here). That is deliberate -- holding the judge constant is what
+makes the oss/gemma/qwen scores comparable -- but it means this leg's memory model
+shares a family with its answer model. Read DIFFERENCES between runs, not levels.
 EOF2
 fi
 
