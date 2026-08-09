@@ -4,6 +4,7 @@
 #
 #   ./switch-hindsight-model.sh oss     # gpt-oss-20b  — production, all operations
 #   ./switch-hindsight-model.sh gemma   # gemma4-26b-a4b-qat — slower, also fine
+#   ./switch-hindsight-model.sh qwen    # qwen3.6-35b-a3b Q4_K_XL (MoE, MTP)
 #   ./switch-hindsight-model.sh status  # show what is currently active
 #
 # Two things must agree or the router thrashes, which is the whole reason this
@@ -62,8 +63,10 @@ case "${1:-}" in
         preset="models-1-oss.ini";   envfile="hindsight-gpt-oss.env"; warn=0 ;;
     gemma|gemma4|gemma4-26b|gemma4-26b-a4b-qat)
         preset="models-1-gemma.ini"; envfile="hindsight-gemma.env"; warn=1 ;;
+    qwen|qwen3.6-35b|qwen35b)
+        preset="models-1-qwen.ini";  envfile="hindsight-qwen.env";  warn=2 ;;
     status) show_status; exit 0 ;;
-    *) die "usage: $(basename "$0") {oss|gemma|status}" ;;
+    *) die "usage: $(basename "$0") {oss|gemma|qwen|status}" ;;
 esac
 
 [[ -f "$SCRIPT_DIR/$preset" ]] || die "missing router preset: $SCRIPT_DIR/$preset"
@@ -80,7 +83,18 @@ ln -sfn "$SCRIPT_DIR/$preset" "$ACTIVE_PRESET"
 ln -sfn "$CONF_DIR/$envfile"  "$ACTIVE_ENV"
 echo "profile: ${1}  (models-1.ini -> $preset, hindsight.env -> $envfile)"
 
-if (( warn )); then
+if (( warn == 2 )); then
+    cat >&2 <<'EOF2'
+
+NOTE: qwen3.6-35b is ALSO the benchmark's default answer+judge model on :8080.
+Running it as the model under test would have it grade its own memories. The
+paired .env.bench-qwen already points answer+judge at gemma4-31b instead -- use
+that profile, and remember its absolute score is not comparable to runs judged
+by qwen.
+EOF2
+fi
+
+if (( warn == 1 )); then
     cat >&2 <<'EOF'
 
 NOTE: the gemma profile depends on two mitigations for Reflect to terminate --
