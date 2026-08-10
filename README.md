@@ -103,7 +103,7 @@ tail -f logs/autostart.log
 | `CMAKE_FLAGS` | `-DGGML_VULKAN=ON -DGGML_NATIVE=1 ...` | CMake flags for the llama.cpp build. |
 | `SERVER_FLAGS` | `--host 0.0.0.0 --models-max 1` | Flags passed to each `llama-server` instance. |
 
-**`models-0.ini` / `models-1.ini`** — per-model sampling params and global server flags (`[*]` section) for the Vulkan0:8080 and Vulkan1:8081 routers respectively. Each instance is pinned to one GPU on the CLI (see `run.sh`), so presets must fit a single 32GB card — no `split-mode=layer`.
+**`presets/models-0.ini` / `presets/models-1.ini`** — per-model sampling params and global server flags (`[*]` section) for the Vulkan0:8080 and Vulkan1:8081 routers respectively. All router presets live in `presets/`; the `model =` paths inside them stay relative to the repo root, because `run.sh` cds there before launching. Each instance is pinned to one GPU on the CLI (see `run.sh`), so presets must fit a single 32GB card — no `split-mode=layer`.
 
 ## Models
 
@@ -131,7 +131,7 @@ Hindsight uses its `litellm` reranker provider with API base `http://127.0.0.1:8
 
 The optional fourth column renames the downloaded file locally. Run `./models/update.sh` to download models without rebuilding, or use the top-level `./update.sh` workflow.
 
-**2.** Add a preset section to `models-0.ini`, `models-1.ini`, or both:
+**2.** Add a preset section to `presets/models-0.ini`, `presets/models-1.ini`, or both:
 
 ```ini
 [my-model@q5]
@@ -156,8 +156,11 @@ install.sh                  # first-time setup (deps, clone, systemd service)
 run.sh                      # launch Open WebUI + two llama-server instances (Vulkan0:8080, Vulkan1:8081)
 update.sh                   # stop, rebuild, update models, start
 start.sh / stop.sh          # systemd service control
-models-0.ini                # Vulkan0:8080 router presets
-models-1.ini                # Vulkan1:8081 router presets
+presets/                    # llama-server router presets (one INI per instance/profile)
+  models-0.ini              # Vulkan0:8080 — Open WebUI + the benchmark's answer/judge models
+  models-0-judge.ini        # Vulkan0:8080 — judge sweeps only (MODELS_0_PRESET=... ./run.sh)
+  models-1.ini              # Vulkan1:8081 — symlink to the active models-1-*.ini profile
+  models-1-{oss,gemma,qwen}.ini  # the Hindsight profiles, swapped by switch-hindsight-model.sh
 llama.cpp/                  # llama.cpp source + build (cloned by install.sh, gitignored)
 models/
   list.txt                  # tab-separated HuggingFace model manifest

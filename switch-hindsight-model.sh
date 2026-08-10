@@ -9,7 +9,7 @@
 #
 # Two things must agree or the router thrashes, which is the whole reason this
 # script exists:
-#   models-1.ini                        -> models-1-{oss,gemma}.ini   (symlink)
+#   presets/models-1.ini                -> models-1-{oss,gemma}.ini   (symlink)
 #   ~/.config/hindsight/hindsight.env   -> hindsight-{gpt-oss,gemma}.env (symlink)
 # --models-max is 2 and the reranker permanently holds one slot, so exactly one
 # LLM may carry load-on-startup. If Hindsight asks for the other one, the router
@@ -17,7 +17,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ACTIVE_PRESET="$SCRIPT_DIR/models-1.ini"
+PRESET_DIR="$SCRIPT_DIR/presets"
+ACTIVE_PRESET="$PRESET_DIR/models-1.ini"
 CONF_DIR="$HOME/.config/hindsight"
 ACTIVE_ENV="$CONF_DIR/hindsight.env"
 
@@ -30,7 +31,7 @@ link_target() {  # $1 = path -> prints basename of resolved target, or a marker
 }
 
 show_status() {
-    echo "models-1.ini      -> $(link_target "$ACTIVE_PRESET")"
+    echo "presets/models-1.ini -> $(link_target "$ACTIVE_PRESET")"
     echo "hindsight.env     -> $(link_target "$ACTIVE_ENV")"
     echo -n "hindsight.env model: "
     grep -E '^HINDSIGHT_API_LLM_MODEL=' "$ACTIVE_ENV" 2>/dev/null | cut -d= -f2- || echo "?"
@@ -69,7 +70,7 @@ case "${1:-}" in
     *) die "usage: $(basename "$0") {oss|gemma|qwen|status}" ;;
 esac
 
-[[ -f "$SCRIPT_DIR/$preset" ]] || die "missing router preset: $SCRIPT_DIR/$preset"
+[[ -f "$PRESET_DIR/$preset" ]] || die "missing router preset: $PRESET_DIR/$preset"
 [[ -f "$CONF_DIR/$envfile"  ]] || die "missing hindsight profile: $CONF_DIR/$envfile"
 
 # Back up any real (non-symlink) file once before replacing it with a symlink.
@@ -79,9 +80,9 @@ for f in "$ACTIVE_PRESET" "$ACTIVE_ENV"; do
     fi
 done
 
-ln -sfn "$SCRIPT_DIR/$preset" "$ACTIVE_PRESET"
+ln -sfn "$preset" "$ACTIVE_PRESET"
 ln -sfn "$CONF_DIR/$envfile"  "$ACTIVE_ENV"
-echo "profile: ${1}  (models-1.ini -> $preset, hindsight.env -> $envfile)"
+echo "profile: ${1}  (presets/models-1.ini -> $preset, hindsight.env -> $envfile)"
 
 if (( warn == 2 )); then
     cat >&2 <<'EOF2'

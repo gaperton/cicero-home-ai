@@ -14,7 +14,7 @@ Two `llama-server` instances, built from a single Vulkan `llama.cpp/` checkout a
 
 **Layout:**
 - `.env` — Vulkan cmake flags and `SERVER_FLAGS`
-- `models-0.ini` / `models-1.ini` — independent router presets for Vulkan0:8080 and Vulkan1:8081 (no split-mode)
+- `presets/` — all llama-server router presets. `models-0.ini` / `models-1.ini` are the independent presets for Vulkan0:8080 and Vulkan1:8081 (no split-mode); `models-0-judge.ini` is a Vulkan0 variant for judge sweeps, selected with `MODELS_0_PRESET=./presets/models-0-judge.ini ./run.sh`. Relative `model =` paths inside a preset resolve against the repo root, not the preset's own directory, because `run.sh` cds to the repo root first.
 - `llama.cpp/` — cloned separately (gitignored), built binaries live here alongside source; the same build/binaries are reused by `benchmark/` (no separate checkout)
 - `benchmark/` — `bench.sh` / `bench-mtp.sh` run ad hoc comparisons against the shared `../llama.cpp/` build, not a standalone checkout. `bench-mtp.sh` drives the Hindsight workload via `hindsight-load.py`, each model under its own `models-1.ini` preset flags; read the `mix, per 100 calls` row, not `tg t/s`. Its profiles are derived from Hindsight's own `llm_requests` table (see below), not from HINDSIGHT.md's four hand-timed `hermes` calls. `bench-hindsight.py` measures the real Hindsight service instead.
 
