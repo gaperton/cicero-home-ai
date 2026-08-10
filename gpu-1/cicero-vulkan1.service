@@ -1,5 +1,5 @@
 [Unit]
-Description=Cicero Home AI llama-server stack
+Description=Cicero llama-server Vulkan1:8081 (Hindsight)
 After=network-online.target
 Wants=network-online.target
 
@@ -7,13 +7,13 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/gaperton/cicero-home-ai
 Environment=PATH=/home/gaperton/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/home/gaperton/cicero-home-ai/run.sh
+ExecStart=/home/gaperton/cicero-home-ai/gpu-1/run.sh
 Restart=always
 RestartSec=10
 TimeoutStopSec=30
 KillMode=control-group
-StandardOutput=append:/home/gaperton/cicero-home-ai/logs/autostart.log
-StandardError=append:/home/gaperton/cicero-home-ai/logs/autostart.log
+StandardOutput=append:/home/gaperton/cicero-home-ai/logs/vulkan1.log
+StandardError=append:/home/gaperton/cicero-home-ai/logs/vulkan1.log
 
 [Install]
 WantedBy=default.target
