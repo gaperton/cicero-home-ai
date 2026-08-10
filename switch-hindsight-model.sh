@@ -5,6 +5,7 @@
 #   ./switch-hindsight-model.sh oss     # gpt-oss-20b  — production, all operations
 #   ./switch-hindsight-model.sh gemma   # gemma4-26b-a4b-qat — slower, also fine
 #   ./switch-hindsight-model.sh qwen    # qwen3.6-35b-a3b Q4_K_XL (MoE, MTP)
+#   ./switch-hindsight-model.sh judge   # qwen memory model PLUS the benchmark judges
 #   ./switch-hindsight-model.sh status  # show what is currently active
 #
 # Two things must agree or the router thrashes, which is the whole reason this
@@ -61,13 +62,15 @@ except Exception:
 resident="llm"
 case "${1:-}" in
     oss|gpt-oss|gpt-oss-20b)
-        preset="models-1-oss.ini";   envfile="hindsight-gpt-oss.env"; warn=0 ;;
+        preset="models-1-oss-2.ini";   envfile="hindsight-gpt-oss.env"; warn=0 ;;
     gemma|gemma4|gemma4-26b|gemma4-26b-a4b-qat)
-        preset="models-1-gemma.ini"; envfile="hindsight-gemma.env"; warn=1 ;;
+        preset="models-1-gemma-2.ini"; envfile="hindsight-gemma.env"; warn=1 ;;
     qwen|qwen3.6-35b|qwen35b)
-        preset="models-1-qwen.ini";  envfile="hindsight-qwen.env";  warn=2 ;;
+        preset="models-1-qwen-2.ini";  envfile="hindsight-qwen.env";  warn=2 ;;
+    judge)
+        preset="models-1-judge-1.ini"; envfile="hindsight-qwen.env";  warn=3 ;;
     status) show_status; exit 0 ;;
-    *) die "usage: $(basename "$0") {oss|gemma|qwen|status}" ;;
+    *) die "usage: $(basename "$0") {oss|gemma|qwen|judge|status}" ;;
 esac
 
 [[ -f "$PRESET_DIR/$preset" ]] || die "missing router preset: $PRESET_DIR/$preset"
@@ -83,6 +86,14 @@ done
 ln -sfn "$preset" "$ACTIVE_PRESET"
 ln -sfn "$CONF_DIR/$envfile"  "$ACTIVE_ENV"
 echo "profile: ${1}  (presets/models-1.ini -> $preset, hindsight.env -> $envfile)"
+
+if (( warn == 3 )); then
+    cat >&2 <<'EOF3'
+
+NOTE: the judge profile has no [llm]/[reranker] — Hindsight is offline until you
+switch back to `qwen`.
+EOF3
+fi
 
 if (( warn == 2 )); then
     cat >&2 <<'EOF2'
