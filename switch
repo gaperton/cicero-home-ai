@@ -3,7 +3,15 @@
 #
 #   ./switch gpu-1 qwen      # Hindsight memory model
 #   ./switch gpu-0 default
+#   ./switch gpu-0           # reload the preset already active (after editing it)
 #   ./switch                 # show what is active on both
+#
+# A LoCoMo benchmark run walks gpu-1 through three presets, one per phase. The
+# card holds one preset at a time, and each role has its own router id, so the
+# Hindsight env is correct throughout and never changes:
+#   ./switch gpu-1 oss       # 1. ingest + consolidate  [llm] + [reranker]
+#   ./switch gpu-1 answers   # 2. recall + answers      [answer] + [reranker]
+#   ./switch gpu-1 judge     # 3. scoring               [judge] + [reranker]
 #
 # gpu-N/active.ini is a symlink to the chosen preset; that GPU's run.sh reads it.
 set -euo pipefail
@@ -21,6 +29,11 @@ unit_of() { echo "cicero-vulkan${1#gpu-}.service"; }
 # Hindsight resolves its LLM through whatever preset gpu-1 is serving, so the env
 # file has to move with it. Preset name -> env file; anything unlisted keeps the
 # current env.
+#
+# The benchmark presets (answers, judge) are deliberately unlisted. They serve
+# [answer]/[judge] rather than [llm], so no env var changes meaning when they
+# load, and Hindsight must NOT be restarted mid-run — a restart here would drop
+# the pg0 bench instance's connections between phases.
 env_for() {
     case "$1" in
         oss)   echo "hindsight-gpt-oss.env" ;;
@@ -55,20 +68,30 @@ except Exception: print("    (not reachable)")' 2>/dev/null || echo "    (not re
 }
 
 [[ $# -eq 0 || "${1:-}" == "status" ]] && { show_status; exit 0; }
-[[ $# -eq 2 ]] || die "usage: $(basename "$0") {gpu-0|gpu-1} <preset> | status"
+[[ $# -eq 1 || $# -eq 2 ]] || die "usage: $(basename "$0") {gpu-0|gpu-1} [preset] | status"
 
-gpu="$1"; name="$2"
+gpu="$1"; name="${2:-}"
 [[ "$gpu" == gpu-0 || "$gpu" == gpu-1 ]] || die "unknown gpu: $gpu (expected gpu-0 or gpu-1)"
 [[ -d "$PRESET_DIR/$gpu" ]] || die "missing preset dir: $PRESET_DIR/$gpu"
 
-preset="$name.ini"
-[[ -f "$PRESET_DIR/$gpu/$preset" ]] || die "no preset '$name' in $gpu (have: $(list_presets "$gpu"))"
-
-ln -sfn "$preset" "$PRESET_DIR/$gpu/active.ini"
-echo "$gpu -> $preset"
+# No preset named: reload whatever active.ini already points at. Used after
+# editing a live preset — the symlink and the Hindsight env stay untouched,
+# only the service restarts.
+if [[ -z "$name" ]]; then
+    link="$PRESET_DIR/$gpu/active.ini"
+    [[ -L "$link" ]] || die "$gpu has no active preset (have: $(list_presets "$gpu"))"
+    preset="$(basename "$(readlink -f "$link")")"
+    [[ -f "$PRESET_DIR/$gpu/$preset" ]] || die "$gpu/active.ini is dangling -> $preset"
+    echo "$gpu -> $preset (unchanged, reloading)"
+else
+    preset="$name.ini"
+    [[ -f "$PRESET_DIR/$gpu/$preset" ]] || die "no preset '$name' in $gpu (have: $(list_presets "$gpu"))"
+    ln -sfn "$preset" "$PRESET_DIR/$gpu/active.ini"
+    echo "$gpu -> $preset"
+fi
 
 envfile=""
-if [[ "$gpu" == gpu-1 ]]; then
+if [[ "$gpu" == gpu-1 && -n "$name" ]]; then
     envfile="$(env_for "$name")"
     if [[ -n "$envfile" ]]; then
         [[ -f "$CONF_DIR/$envfile" ]] || die "missing hindsight profile: $CONF_DIR/$envfile"
