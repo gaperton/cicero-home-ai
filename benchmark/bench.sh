@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bench.sh — Run llama-bench on a single GPU via the Vulkan backend, for the
-# 27B and 31B-QAT models. Uses the shared prod build in ../llama.cpp.
+# 27B, 31B-QAT and Nemotron models. Uses the shared prod build in ../llama.cpp.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,12 +23,12 @@ fi
 mkdir -p "$REPORTS_DIR"
 
 MODELS=(
-    "Qwen 3.6 27B · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q4_K_XL.gguf"
-    "Qwen 3.6 27B · UD-Q5_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q5_K_XL.gguf"
-    "Qwen 3.6 27B · UD-Q6_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q6_K_XL.gguf"
-    "Qwen 3.6 27B · Q6_K|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q6_K.gguf"
-    "Qwen 3.6 27B · Q8_0|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-Q8_0.gguf"
+    "Qwen 3.8 27B · UD-Q4_K_XL|$MODELS_DIR/Qwen3.8-27B/Qwen3.8-27B-UD-Q4_K_XL.gguf"
+    "Qwen 3.8 27B · UD-Q5_K_M|$MODELS_DIR/Qwen3.8-27B/Qwen3.8-27B-UD-Q5_K_M.gguf"
+    "Qwen 3.8 27B · UD-Q6_K|$MODELS_DIR/Qwen3.8-27B/Qwen3.8-27B-UD-Q6_K.gguf"
+    "Qwen 3.8 27B · UD-Q6_K_M|$MODELS_DIR/Qwen3.8-27B/Qwen3.8-27B-UD-Q6_K_M.gguf"
     "Gemma 4 31B QAT · UD-Q4_K_XL|$MODELS_DIR/Gemma4-31B-QAT/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf"
+    "Nemotron 3.5 Lightning 30B-A3B · UD-IQ4_NL|$MODELS_DIR/Nemotron-3.5-Lightning/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-IQ4_NL.gguf"
 )
 
 write_system_info() {

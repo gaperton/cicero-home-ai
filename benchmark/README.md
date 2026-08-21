@@ -7,7 +7,7 @@ with, so a number measured here is a number the deployment can actually reach.
 | file | what it measures |
 | --- | --- |
 | `bench.sh` | raw `llama-bench` prefill/decode per model and quant, one GPU |
-| `bench-mtp.sh` | MTP (self-speculative decoding) A/B **on the Hindsight workload**, per model, under that model's `models-1.ini` preset flags |
+| `bench-mtp.sh` | MTP (self-speculative decoding) A/B **on the Hindsight workload**, per model, under that model's `gpu-1/*.ini` preset flags |
 | `hindsight-load.py` | the load generator behind `bench-mtp.sh`: replays Hindsight's request shape against any `llama-server` |
 | `bench-hindsight.py` | end-to-end against the real Hindsight service (banks, Recall, rerank), not the router |
 
@@ -182,7 +182,7 @@ Known approximations:
 ```bash
 ./bench-mtp.sh                  # every model, every profile, baseline vs draft-mtp
 ./bench-mtp.sh gpt-oss          # filter by label substring
-PROFILES="consolidate" REPEATS=5 ./bench-mtp.sh qwen3.6-27b
+PROFILES="consolidate" REPEATS=5 ./bench-mtp.sh qwen3.8-27b
 CONCURRENCY=3 ./bench-mtp.sh    # force the saturated case instead of measured overlap
 ```
 

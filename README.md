@@ -113,7 +113,7 @@ Each preset must fit a single 32 GB card, since instances are pinned one-per-GPU
 
 | Router | Preset | Model |
 |---|---|---|
-| Vulkan0:8080 | `qwen3.6-27b` | Qwen3.6 27B UD-Q6_K_XL with built-in MTP |
+| Vulkan0:8080 | `qwen3.8-27b` | Qwen3.8 27B UD-Q6_K_XL with built-in MTP |
 | Vulkan0:8080 | `gemma4-31b` | Gemma 4 31B Q6_K with an MTP draft model |
 | Vulkan1:8081 | `qwen3.6-35b-a3b` | Qwen3.6 35B-A3B MoE UD-Q5_K_XL, two parallel slots, MTP depth 2 |
 | Vulkan1:8081 | `gemma4-26b-a4b` | Gemma 4 26B-A4B MoE UD-Q6_K_XL, four parallel slots, MTP disabled |

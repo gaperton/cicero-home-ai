@@ -40,21 +40,28 @@
 # on. `burst` per profile is the per-operation view; per-request pp/tg are
 # diagnostics. A row where tg goes up and the mix goes up is MTP losing.
 #
-# Each model runs under its own `models-1.ini` preset flags (slots, ctx, batch,
+# Each model runs under its own `gpu-1/*.ini` preset flags (slots, ctx, batch,
 # KV type, chat template, temp) — an A/B against a model that is not configured
-# the way it is deployed measures nothing.
+# the way it is deployed measures nothing. The presets used to live in a single
+# models-1.ini; they are now one file per profile under ../gpu-1/ (oss.ini,
+# gemma.ini, qwen.ini) plus the benchmark-phase presets answers.ini/judge.ini.
 #
-# Only Qwen 3.6 is A/B'd. It bakes its MTP head into the main gguf
-# (qwen35.nextn_predict_layers), so --spec-type draft-mtp alone runs it against
-# the target model itself. The other two run baseline-only:
+# The Qwen models are A/B'd. Both bake their MTP head into the main gguf
+# (qwen35.nextn_predict_layers=1, verified in each checkpoint), so --spec-type
+# draft-mtp alone runs it against the target model itself. The rest run
+# baseline-only:
 #   - gpt-oss-20b, the deployed Hindsight LLM, has no MTP head and no sidecar
 #     draft. It is here as the reference the alternates have to beat.
 #   - Gemma 4 does ship an MTP head as a separate small "gemma4-assistant" gguf,
-#     but it is not measured here. models-1.ini records the dense 31B at 6.5x
+#     but it is not measured here. The presets record the dense 31B at 6.5x
 #     slower prefill and 6.7x slower decode than gpt-oss at Hindsight's prompt
 #     sizes (Retain 41.8 s end to end against 4.3 s) — a gap no draft depth
 #     closes. Gemma stays as a baseline reference row only. To measure it
 #     again, put the sidecar path back in the draft field of its MODELS entry.
+# Nemotron 3.5 Lightning bakes its head in the same way
+# (nemotron_h_moe.nextn_predict_layers=1, blk.52.nextn.* present) and is A/B'd
+# too — verified by booting it with --spec-type draft-mtp, which logs "creating
+# MTP draft context against the target model" rather than falling back.
 #
 # NOTE ON MEASUREMENT HYGIENE: an unloaded card is not an idle test bed. Stop
 # cicero-home-ai.service and hindsight.service first — the script warns if they
@@ -81,7 +88,7 @@ LOADER="$SCRIPT_DIR/hindsight-load.py"
 
 BENCH_SERVER="${BENCH_SERVER:-$LLAMA_DIR/llama-server}"
 DEVICE="${DEVICE:-Vulkan1}"          # Hindsight's card
-FIT_TARGET_MIB="${FIT_TARGET_MIB:-256}"   # matches models-1.ini fit-target
+FIT_TARGET_MIB="${FIT_TARGET_MIB:-512}"   # matches gpu-1/*.ini fit-target
 PROFILES="${PROFILES:-retain consolidate reflect}"   # also available: reflect-long (p90)
 # Empty = each profile uses its own measured average overlap (1 / 2 / 1). Set
 # it to 3 to study the saturated case (HINDSIGHT_API_LLM_MAX_CONCURRENT); the
@@ -132,27 +139,50 @@ mkdir -p "$REPORTS_DIR"
 NO_THINK="-rea off"
 
 # label|model|draft|server_flags
-# server_flags otherwise mirror each model's models-1.ini preset. Anything
+# server_flags otherwise mirror each model's gpu-1/*.ini preset. Anything
 # omitted there (batch/ubatch on the Gemma dense model, for instance) is
 # deliberately omitted here too — measured net-negative, see the preset comments.
-GPTOSS_FLAGS="-np 3 -c 300000 -b 4096 -ub 2048 -ctk f16 -ctv f16 --temp 0.2 --chat-template-file $TEMPLATES_DIR/gpt-oss-20b-harmony.jinja"
+# gpu-1/oss.ini [llm]
+GPTOSS_FLAGS="-np 3 -c 393216 -b 4096 -ub 2048 -ctk f16 -ctv f16 --temp 0.2 --chat-template-file $TEMPLATES_DIR/gpt-oss-20b-harmony.jinja"
+# No Hindsight-LLM preset any more — the 31B moved to gpu-1/judge.ini in the
+# benchmark judge role (np 2, c 65536, f16 KV, reasoning auto), which is a
+# different workload. These are its old [llm] flags, kept unchanged so this
+# baseline row stays comparable with the earlier reports in reports/.
 GEMMA31_FLAGS="-np 2 -c 200000 -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --presence-penalty 0 $NO_THINK"
-GEMMA26_FLAGS="-np 3 -c 300000 -ctk f16 -ctv f16 --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --presence-penalty 0 $NO_THINK"
-QWEN27_FLAGS="-np 2 -c 200000 -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 0 $NO_THINK"
-QWEN35_FLAGS="-np 3 -c 300000 -ctk f16 -ctv f16 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 0 $NO_THINK"
+# gpu-1/gemma.ini [llm]. --reasoning-budget is REQUIRED, not tuning: without it
+# a forced tool turn can collapse into an unbounded generation that holds a slot
+# past the client timeout. See notes/hindsight-gemma.md.
+GEMMA26_FLAGS="-np 3 -c 300000 -ctk f16 -ctv f16 --temp 0.2 --top-p 0.95 --top-k 64 --min-p 0.0 --presence-penalty 0 --reasoning-budget 1024 $NO_THINK"
+# gpu-1/qwen.ini [llm] shape. The 27B has no :8081 profile of its own — the only
+# 27B preset is the single-slot gpu-0/active.ini [qwen3.8-27b] — so it runs
+# under the Hindsight Qwen profile's flags, which is the deployment it is a
+# candidate for.
+QWEN38_FLAGS="-np 2 -c 200000 -b 4096 -ub 2048 -ctk q8_0 -ctv q8_0 --temp 0.2 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 0 $NO_THINK"
+# gpu-1/qwen.ini [llm]
+QWEN35_FLAGS="-np 2 -c 200000 -b 4096 -ub 2048 -ctk q8_0 -ctv q8_0 --temp 0.2 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 0 $NO_THINK"
+# No preset yet. Hybrid Mamba/attention MoE (nemotron_h_moe, 128 experts, 6
+# active + 1 shared), so it borrows the qwen3.6-35b-a3b profile's slot/ctx/KV
+# budget; sampling left at llama.cpp defaults apart from temp, since this
+# model's recommended params are not established here. q8_0 KV verified to boot
+# on the hybrid arch. Replace with a real preset before quoting its numbers as
+# deployable.
+NEMOTRON_FLAGS="-np 2 -c 200000 -b 4096 -ub 2048 -ctk q8_0 -ctv q8_0 --temp 0.2 $NO_THINK"
 
 MODELS=(
     "gpt-oss-20b · UD-Q8_K_XL (deployed, baseline only)|$MODELS_DIR/GPT-OSS-20B/gpt-oss-20b-UD-Q8_K_XL.gguf||$GPTOSS_FLAGS"
     "gemma4-31b-qat · UD-Q4_K_XL (baseline only)|$MODELS_DIR/Gemma4-31B-QAT/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf||$GEMMA31_FLAGS"
     "gemma4-26b-a4b-qat · UD-Q4_K_XL (baseline only)|$MODELS_DIR/Gemma4-26B-A4B-QAT/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf||$GEMMA26_FLAGS"
-    "qwen3.6-27b · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-27B/Qwen3.6-27B-UD-Q4_K_XL.gguf||$QWEN27_FLAGS"
+    "qwen3.8-27b · UD-Q4_K_XL|$MODELS_DIR/Qwen3.8-27B/Qwen3.8-27B-UD-Q4_K_XL.gguf||$QWEN38_FLAGS"
     "qwen3.6-35b-a3b · UD-Q4_K_XL|$MODELS_DIR/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf||$QWEN35_FLAGS"
+    "nemotron3.5-lightning-30b-a3b · UD-IQ4_NL|$MODELS_DIR/Nemotron-3.5-Lightning/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-IQ4_NL.gguf||$NEMOTRON_FLAGS"
 )
 
 # Models whose MTP head is baked into the main gguf: no -md, but they still
 # support --spec-type draft-mtp. Anything else with an empty draft field runs
-# baseline-only — gpt-oss-20b because it has no head, Gemma by choice.
-has_baked_mtp() { [[ "$1" == qwen3.6-* ]]; }
+# baseline-only — gpt-oss-20b because it has no head, Gemma by choice. Both Qwen
+# checkpoints carry qwen35.nextn_predict_layers=1, hence the family-wide glob;
+# Nemotron carries nemotron_h_moe.nextn_predict_layers=1.
+has_baked_mtp() { [[ "$1" == qwen3.* || "$1" == nemotron3.* ]]; }
 
 SERVER_PID=""
 SERVER_LOG=""
@@ -198,7 +228,7 @@ start_server() {
     local model="$1" preset_flags="$2" spec_flags="$3"
 
     SERVER_LOG="$(mktemp)"
-    # Everything models-1.ini puts in [*], plus the two flags every model
+    # Everything gpu-1/*.ini puts in [*], plus the two flags every model
     # section sets. --cache-ram -1 is not cosmetic: llama.cpp defaults to an
     # 8192 MiB prompt cache, and this workload leans on the host-RAM cache to
     # keep the Retain and Consolidation system prefixes alive while the two
@@ -323,7 +353,7 @@ write_system_info() {
         echo "| **Concurrency** | ${CONCURRENCY:-per profile, from recorded overlap} |"
         echo "| **warmup / repeats** | $WARMUP / $REPEATS bursts |"
         echo "| **spec-draft-n-max** | $SPEC_DRAFT_N_MAX |"
-        echo "| **KV / batch / slots** | per model, from models-1.ini |"
+        echo "| **KV / batch / slots** | per model, from gpu-1/*.ini |"
         echo "| **extra body** | \`$LLM_EXTRA_BODY\` |"
         echo "| **thinking** | gpt-oss: effort=low; all others: \`$NO_THINK\` |"
         echo
