@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gpu-0/run.sh — Open WebUI + llama-server on Vulkan0:8080.
+# gpu-0/run.sh — Open WebUI + llama-server on ROCm0:8080.
 # Run by cicero-vulkan0.service. Foreground; exits if either child dies.
 set -euo pipefail
 
@@ -34,7 +34,7 @@ echo "gpu-0: $(basename "$(readlink -f "$PRESET")") (--models-max $MAX)"
     $SERVER_FLAGS \
     --models-max "$MAX" \
     --models-preset "$PRESET" \
-    --device Vulkan0 \
+    --device ROCm0 \
     --port 8080 &
 PIDS+=("$!")
 

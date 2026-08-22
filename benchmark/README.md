@@ -7,9 +7,16 @@ with, so a number measured here is a number the deployment can actually reach.
 | file | what it measures |
 | --- | --- |
 | `bench.sh` | raw `llama-bench` prefill/decode per model and quant, one GPU |
+| `bench-split.sh` | the same prefill/decode, one model at a time, three ways: one card, `-sm layer`, `-sm tensor` |
 | `bench-mtp.sh` | MTP (self-speculative decoding) A/B **on the Hindsight workload**, per model, under that model's `gpu-1/*.ini` preset flags |
 | `hindsight-load.py` | the load generator behind `bench-mtp.sh`: replays Hindsight's request shape against any `llama-server` |
 | `bench-hindsight.py` | end-to-end against the real Hindsight service (banks, Recall, rerank), not the router |
+
+`bench-split.sh` answers a different question from the rest: not *which model*
+but *which layout*. It refuses to run while `cicero-vulkan1.service` is up, since
+that unit holds both cards, and it samples GTT around every run — a model that
+spills into host memory measures the PCIe bus rather than the GPU, and the report
+marks any such run invalid rather than letting the number stand.
 
 `bench-mtp.sh` and `hindsight-load.py` measure llama.cpp under Hindsight-shaped
 load. `bench-hindsight.py` measures Hindsight itself. Use the first pair to

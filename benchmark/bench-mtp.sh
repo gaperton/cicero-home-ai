@@ -87,7 +87,7 @@ TEMPLATES_DIR="$SCRIPT_DIR/../templates"
 LOADER="$SCRIPT_DIR/hindsight-load.py"
 
 BENCH_SERVER="${BENCH_SERVER:-$LLAMA_DIR/llama-server}"
-DEVICE="${DEVICE:-Vulkan1}"          # Hindsight's card
+DEVICE="${DEVICE:-ROCm1}"          # Hindsight's card
 FIT_TARGET_MIB="${FIT_TARGET_MIB:-512}"   # matches gpu-1/*.ini fit-target
 PROFILES="${PROFILES:-retain consolidate reflect}"   # also available: reflect-long (p90)
 # Empty = each profile uses its own measured average overlap (1 / 2 / 1). Set
@@ -348,7 +348,7 @@ write_system_info() {
         echo "| **RAM** | $ram |"
         echo "| **Kernel** | $kernel |"
         echo "| **llama.cpp** | $llama_ver |"
-        echo "| **Backend** | Vulkan ($DEVICE) |"
+        echo "| **Backend** | ROCm ($DEVICE) |"
         echo "| **Workload** | psychology-bank shape: $PROFILES |"
         echo "| **Concurrency** | ${CONCURRENCY:-per profile, from recorded overlap} |"
         echo "| **warmup / repeats** | $WARMUP / $REPEATS bursts |"
@@ -367,7 +367,7 @@ write_system_info() {
     } | tee "$OUTFILE"
 }
 
-echo "=== MTP bench on the Hindsight workload (Vulkan, $DEVICE) — $(date) ==="
+echo "=== MTP bench on the Hindsight workload (ROCm, $DEVICE) — $(date) ==="
 echo "Saving to: $OUTFILE"
 echo
 preflight

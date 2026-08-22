@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bench.sh — Run llama-bench on a single GPU via the Vulkan backend, for the
+# bench.sh — Run llama-bench on a single GPU via the ROCm backend, for the
 # 27B, 31B-QAT and Nemotron models. Uses the shared prod build in ../llama.cpp.
 set -euo pipefail
 
@@ -10,7 +10,7 @@ LLAMA_DIR="$SCRIPT_DIR/../llama.cpp"
 MODELS_DIR="$SCRIPT_DIR/../models"
 
 BENCH="${BENCH:-$LLAMA_DIR/llama-bench}"
-DEVICE="${DEVICE:-Vulkan0}"
+DEVICE="${DEVICE:-ROCm0}"
 BENCH_FLAGS="${BENCH_FLAGS:--ngl 99 -fa on -r 3}"
 REPORTS_DIR="${REPORTS_DIR:-reports}"
 OUTFILE="${OUTFILE:-$REPORTS_DIR/bench-$(date +%Y%m%d-%H%M%S).md}"
@@ -48,7 +48,7 @@ write_system_info() {
     llama_ver=$(git -C "$LLAMA_DIR" log -1 --format="%h (%cd)" --date=short 2>/dev/null || echo "N/A")
 
     {
-        echo "# Vulkan Benchmark Report — $(date)"
+        echo "# ROCm Benchmark Report — $(date)"
         echo
         echo "## System Info"
         echo
@@ -58,7 +58,7 @@ write_system_info() {
         echo "| **RAM** | $ram |"
         echo "| **Kernel** | $kernel |"
         echo "| **llama.cpp** | $llama_ver |"
-        echo "| **Backend** | Vulkan ($DEVICE) |"
+        echo "| **Backend** | ROCm ($DEVICE) |"
         echo
     } | tee "$OUTFILE"
 }
@@ -83,7 +83,7 @@ run_bench_section() {
     echo >> "$OUTFILE"
 }
 
-echo "=== llama-bench (Vulkan, $DEVICE) — $(date) ==="
+echo "=== llama-bench (ROCm, $DEVICE) — $(date) ==="
 echo "Saving to: $OUTFILE"
 echo
 

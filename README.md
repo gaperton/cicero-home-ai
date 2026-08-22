@@ -6,9 +6,9 @@ Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/ll
 
 `llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the model name in the request; when a model isn't loaded, the router starts a child process for it and proxies the request. `--models-max` is hardcoded in each `gpu-N/run.sh` (1 on gpu-0, 2 on gpu-1); it cannot be set inside a preset, because the router reads it before presets load.
 
-Two instances run side by side, one per GPU (Vulkan backend, no layer-split), each its own systemd service: `cicero-vulkan0.service` (port 8080, GPU0, plus Open WebUI) and `cicero-vulkan1.service` (port 8081, GPU1, Hindsight's router). Either restarts without the other. Running each GPU independently outperforms splitting a single model across both cards. In the normal Hindsight configuration, one primary-router model plus Gemma and the Qwen3 reranker can be resident across the two cards.
+The host runs the **combined topology**: one router (`cicero-vulkan1.service`, `gpu-0-1/run.sh`) owns both cards and serves port 8081 with all three models resident — `qwen3.8-27b` on ROCm0, `llm` and `reranker` on ROCm1. Open WebUI is a separate unit (`cicero-vulkan0.service`, `gpu-0-1/webui.sh`) on port 3000, pointed at that same router, so its model list now includes `llm` and `reranker` alongside the chat model. Hindsight is untouched by the change: `llm`/`reranker` keep their ids and their port. Each model is still pinned to a single card — no layer-split — but placement lives in the preset's `device =` keys rather than on the command line. The `cicero-vulkan{0,1}` unit names and `logs/vulkan{0,1}.log` are historical, predating both the ROCm move and this one, and are kept so installed units and `./switch` keep working.
 
-**Open WebUI** runs on port 3000 and uses only the primary Vulkan0 router on port 8080. The secondary Vulkan1 router on port 8081 is reserved for Hindsight and direct API clients. Both raw llama.cpp APIs remain reachable on the LAN as `http://cicero.local:8080/v1` and `http://cicero.local:8081/v1`.
+**Open WebUI** runs on port 3000 against the combined router on port 8081, which Hindsight and direct API clients also use. The raw llama.cpp API is reachable on the LAN as `http://cicero.local:8081/v1`.
 
 | Script | What it does |
 |---|---|
@@ -16,9 +16,11 @@ Two instances run side by side, one per GPU (Vulkan backend, no layer-split), ea
 | `update.sh` | Stop the service, rebuild, update models, and restart the service. |
 | `start.sh` | Start the service via `systemctl --user`. |
 | `stop.sh` | Stop the service via `systemctl --user`. |
-| `gpu-N/run.sh` | Start that GPU's llama-server in the foreground (gpu-0 also starts Open WebUI). Called by its systemd service. |
-| `switch {gpu-0\|gpu-1} <preset>` | Point a GPU at a preset and restart just that service. No args = status. |
-| `benchmark/bench.sh` | Run `llama-bench` (single GPU, Vulkan) and save a Markdown report under `benchmark/reports/`. |
+| `gpu-0-1/run.sh` | Start the combined router (both cards, port 8081) in the foreground. Called by `cicero-vulkan1.service`. |
+| `gpu-0-1/webui.sh` | Start Open WebUI alone on port 3000, pointed at :8081. Called by `cicero-vulkan0.service`. |
+| `gpu-N/run.sh` | Dormant single-card runners, kept for reverting to one-router-per-card. |
+| `switch gpu-0-1 <preset>` | Point the router at a preset and restart it. No args = status. |
+| `benchmark/bench.sh` | Run `llama-bench` (single GPU, ROCm) and save a Markdown report under `benchmark/reports/`. |
 | `benchmark/bench-mtp.sh` | Boot `llama-server` per model/quant and measure MTP speculative-decoding speedup. |
 
 ## Usage
@@ -27,13 +29,15 @@ Two instances run side by side, one per GPU (Vulkan backend, no layer-split), ea
 ./start.sh    # start the service
 ./stop.sh     # stop the service
 ./update.sh   # rebuild, update models, restart
-./gpu-0/run.sh   # foreground: Open WebUI + Vulkan0
-./gpu-1/run.sh   # foreground: Vulkan1
+./gpu-0-1/run.sh   # foreground: combined router, both cards, :8081
+./gpu-0-1/webui.sh # foreground: Open WebUI only, :3000
 ```
 
 ## Installation
 
-Configured for AMD GPUs using the Vulkan backend (via Mesa RADV) — no ROCm/HIP SDK required.
+Configured for AMD GPUs using the **ROCm/HIP backend** (`-DGGML_HIP=ON`, `GPU_TARGETS=gfx1201`).
+The ROCm SDK must be installed first, from AMD's own apt repo — it is not in the Ubuntu archive,
+and `install.sh` checks for `/opt/rocm` and stops if it is missing rather than failing later in the build.
 
 1. Install Linux Mint Cinnamon (or Ubuntu; Mint/Ubuntu assumed below)
 2. Clone this repo and `cd` into it
@@ -98,11 +102,12 @@ tail -f logs/vulkan0.log logs/vulkan1.log
 
 ## Configuration
 
-**`.env`** — Vulkan build flags and server flags:
+**`.env`** — ROCm build flags, HIP toolchain env and server flags:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CMAKE_FLAGS` | `-DGGML_VULKAN=ON -DGGML_NATIVE=1 ...` | CMake flags for the llama.cpp build. |
+| `CMAKE_FLAGS` | `-DGGML_HIP=ON -DGPU_TARGETS=gfx1201 -DGGML_NATIVE=1 ...` | CMake flags for the llama.cpp build. |
+| `ROCM_PATH` / `HIP_PATH` / `HIPCXX` | `/opt/rocm`, `/opt/rocm`, `/opt/rocm/llvm/bin/clang++` | HIP toolchain, exported so cmake's `enable_language(HIP)` finds ROCm's clang. |
 | `SERVER_FLAGS` | `--host 0.0.0.0 --models-max 1` | Flags passed to each `llama-server` instance. |
 
 **`gpu-0/` / `gpu-1/`** — each GPU owns its presets, its `active.ini` symlink and its systemd unit. `model =` paths inside a preset stay relative to the repo root, because each `run.sh` cds there before launching. Each instance is pinned to one GPU on the CLI (see `gpu-N/run.sh`), so presets must fit a single 32GB card — no `split-mode=layer`.
@@ -111,13 +116,13 @@ tail -f logs/vulkan0.log logs/vulkan1.log
 
 Each preset must fit a single 32 GB card, since instances are pinned one-per-GPU (no `split-mode=layer`). Sized for TTY mode; if running from a desktop session, reduce `fit-target` in the corresponding preset to account for the ~2–4 GB consumed by the desktop.
 
-| Router | Preset | Model |
+| Router | Model id | Model |
 |---|---|---|
-| Vulkan0:8080 | `qwen3.8-27b` | Qwen3.8 27B UD-Q6_K_XL with built-in MTP |
-| Vulkan0:8080 | `gemma4-31b` | Gemma 4 31B Q6_K with an MTP draft model |
-| Vulkan1:8081 | `qwen3.6-35b-a3b` | Qwen3.6 35B-A3B MoE UD-Q5_K_XL, two parallel slots, MTP depth 2 |
-| Vulkan1:8081 | `gemma4-26b-a4b` | Gemma 4 26B-A4B MoE UD-Q6_K_XL, four parallel slots, MTP disabled |
-| Vulkan1:8081 | `qwen3-reranker-0.6b` | Qwen3-Reranker 0.6B Q8_0, eight parallel slots, `/v1/rerank` endpoint for Hindsight |
+| ROCm0 (:8081) | `qwen3.8-27b` | Qwen3.8 27B UD-Q6_K with built-in MTP, 2 slots, context autofit (117248/slot measured) |
+| ROCm1 (:8081) | `llm` | GPT-OSS 20B UD-Q8_K_XL, 2 slots, 262144 total = 131072/slot |
+| ROCm1 (:8081) | `reranker` | Qwen3-Reranker 0.6B Q8_0, 8 slots, kv-unified 32768, `/v1/rerank` for Hindsight |
+
+Dormant single-card presets remain in `gpu-0/` (`default.ini`: `qwen3.8-27b`, `gemma4-31b`) and `gpu-1/` (`oss.ini`, `gemma.ini`, `qwen.ini`, `answers.ini`, `judge.ini`).
 
 The files are independent: instance 0 contains the dense presets, while instance 1 contains the Hindsight-oriented MoE presets and GPU reranker. The instance-1 router allows two resident models; the normal pair is `gemma4-26b-a4b` plus `qwen3-reranker-0.6b`. Open WebUI lists only the instance-0 presets; instance 1 remains available to Hindsight and direct API clients. Context is auto-fit to available VRAM (`fit-target = 256` in each file).
 
@@ -152,22 +157,27 @@ repeat-penalty = 1.0
 ## Layout
 
 ```
-.env                        # Vulkan cmake flags + SERVER_FLAGS
+.env                        # ROCm cmake flags + HIP toolchain env + SERVER_FLAGS
 build.sh                    # git pull + rebuild
 install.sh                  # first-time setup (deps, clone, systemd service)
 switch                      # ./switch gpu-1 qwen — repoint a GPU and restart only its service
 update.sh                   # stop, rebuild, update models, start
 start.sh / stop.sh          # systemd service control
-gpu-0/                      # Vulkan0:8080 — Open WebUI's router
+gpu-0-1/                    # ACTIVE — one router, both cards, :8081
+  combined.ini              #   qwen3.8-27b on ROCm0, llm + reranker on ROCm1
+  active.ini                #   symlink to the active preset
+  run.sh                    #   llama-server, --models-max 3, no --device
+  webui.sh                  #   Open WebUI only, :3000 -> :8081
+gpu-0/                      # dormant single-card preset
   default.ini               #   chat models + batch-* judge/answer models
   active.ini                #   symlink to the active preset
-  run.sh                    #   Open WebUI + llama-server Vulkan0:8080
-  cicero-vulkan0.service    #   user unit (installed by install.sh)
-gpu-1/                      # Vulkan1:8081 — Hindsight's router
+  run.sh                    #   Open WebUI + llama-server ROCm0:8080
+  cicero-vulkan0.service    #   user unit — now runs gpu-0-1/webui.sh
+gpu-1/                      # dormant single-card presets
   {oss,gemma,qwen}.ini      #   Hindsight profiles
   active.ini                #   symlink to the active preset
-  run.sh                    #   llama-server Vulkan1:8081
-  cicero-vulkan1.service    #   user unit
+  run.sh                    #   llama-server ROCm1:8081
+  cicero-vulkan1.service    #   user unit — now runs gpu-0-1/run.sh
 llama.cpp/                  # llama.cpp source + build (cloned by install.sh, gitignored)
 models/
   list.txt                  # tab-separated HuggingFace model manifest
@@ -176,7 +186,7 @@ models/
   <model>/
     *.gguf                   # downloaded model files
 benchmark/
-  bench.sh                   # llama-bench runner (single GPU, Vulkan) using ../llama.cpp
+  bench.sh                   # llama-bench runner (single GPU, ROCm) using ../llama.cpp
   bench-mtp.sh                 # MTP speculative-decoding benchmark, drives llama-server directly
   reports/                    # generated benchmark reports
 systemd/

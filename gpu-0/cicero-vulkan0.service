@@ -1,5 +1,5 @@
 [Unit]
-Description=Cicero Open WebUI + llama-server Vulkan0:8080
+Description=Cicero Open WebUI :3000 (combined topology; router is cicero-vulkan1)
 After=network-online.target
 Wants=network-online.target
 
@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/gaperton/cicero-home-ai
 Environment=PATH=/home/gaperton/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/home/gaperton/cicero-home-ai/gpu-0/run.sh
+ExecStart=/home/gaperton/cicero-home-ai/gpu-0-1/webui.sh
 Restart=always
 RestartSec=10
 TimeoutStopSec=30

@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# switch — point a GPU's router at a preset and restart just that instance.
+# switch — point the router at a preset and restart it.
 #
-#   ./switch gpu-1 qwen      # Hindsight memory model
-#   ./switch gpu-0 default
-#   ./switch gpu-0           # reload the preset already active (after editing it)
-#   ./switch                 # show what is active on both
+#   ./switch gpu-0-1 combined   # both cards, chat + Hindsight in one router
+#   ./switch gpu-0-1            # reload the preset already active (after editing it)
+#   ./switch                    # show what is active
+#
+# This host runs the combined topology: ONE router (cicero-vulkan1.service) owns
+# both cards and serves :8081, and Open WebUI is its own unit
+# (cicero-vulkan0.service) pointed at that same port. gpu-0/ and gpu-1/ still
+# hold their one-card presets but are dormant; see README to revert.
 #
 # A LoCoMo benchmark run walks gpu-1 through three presets, one per phase. The
 # card holds one preset at a time, and each role has its own router id, so the
@@ -23,8 +27,21 @@ ACTIVE_ENV="$CONF_DIR/hindsight.env"
 
 die() { echo "error: $*" >&2; exit 1; }
 
-# gpu-N -> the systemd unit that serves it
-unit_of() { echo "cicero-vulkan${1#gpu-}.service"; }
+# The routers this topology actually serves, and the unit + port for each.
+# Kept as a list so reverting to one-router-per-card is a local edit here.
+ROUTERS="gpu-0-1"
+unit_of() {
+    case "$1" in
+        gpu-0-1) echo "cicero-vulkan1.service" ;;
+        *)       echo "" ;;
+    esac
+}
+port_of() {
+    case "$1" in
+        gpu-0-1) echo 8081 ;;
+        *)       echo "" ;;
+    esac
+}
 
 # Hindsight resolves its LLM through whatever preset gpu-1 is serving, so the env
 # file has to move with it. Preset name -> env file; anything unlisted keeps the
@@ -36,6 +53,7 @@ unit_of() { echo "cicero-vulkan${1#gpu-}.service"; }
 # the pg0 bench instance's connections between phases.
 env_for() {
     case "$1" in
+        combined) echo "hindsight-gpt-oss.env" ;;
         oss)   echo "hindsight-gpt-oss.env" ;;
         gemma) echo "hindsight-gemma.env" ;;
         qwen)  echo "hindsight-qwen.env" ;;
@@ -49,7 +67,7 @@ list_presets() {  # $1 = gpu-N
 }
 
 show_status() {
-    for gpu in gpu-0 gpu-1; do
+    for gpu in $ROUTERS; do
         local link="$PRESET_DIR/$gpu/active.ini"
         printf '%-6s -> %-16s (%s)\n' "$gpu" \
             "$([ -L "$link" ] && basename "$(readlink -f "$link")" || echo '(unset)')" \
@@ -57,7 +75,8 @@ show_status() {
         echo "       available: $(list_presets "$gpu")"
     done
     echo "hindsight.env -> $([ -L "$ACTIVE_ENV" ] && basename "$(readlink -f "$ACTIVE_ENV")" || echo '(plain file)')"
-    for port in 8080 8081; do
+    echo "open-webui   -> cicero-vulkan0.service: $(systemctl --user is-active cicero-vulkan0.service 2>/dev/null) (:3000 -> :8081)"
+    for port in $(for g in $ROUTERS; do port_of "$g"; done); do
         echo "  :$port"
         curl -s --max-time 3 "http://127.0.0.1:$port/v1/models" 2>/dev/null | python3 -c '
 import json,sys
@@ -68,10 +87,16 @@ except Exception: print("    (not reachable)")' 2>/dev/null || echo "    (not re
 }
 
 [[ $# -eq 0 || "${1:-}" == "status" ]] && { show_status; exit 0; }
-[[ $# -eq 1 || $# -eq 2 ]] || die "usage: $(basename "$0") {gpu-0|gpu-1} [preset] | status"
+[[ $# -eq 1 || $# -eq 2 ]] || die "usage: $(basename "$0") {$(echo $ROUTERS | tr ' ' '|')} [preset] | status"
 
 gpu="$1"; name="${2:-}"
-[[ "$gpu" == gpu-0 || "$gpu" == gpu-1 ]] || die "unknown gpu: $gpu (expected gpu-0 or gpu-1)"
+case " $ROUTERS " in
+    *" $gpu "*) ;;
+    *) case "$gpu" in
+           gpu-0|gpu-1) die "$gpu is dormant under the combined topology — one router (gpu-0-1) owns both cards. Use: $(basename "$0") gpu-0-1 [preset]" ;;
+           *)           die "unknown router: $gpu (expected $ROUTERS)" ;;
+       esac ;;
+esac
 [[ -d "$PRESET_DIR/$gpu" ]] || die "missing preset dir: $PRESET_DIR/$gpu"
 
 # No preset named: reload whatever active.ini already points at. Used after
@@ -91,7 +116,7 @@ else
 fi
 
 envfile=""
-if [[ "$gpu" == gpu-1 && -n "$name" ]]; then
+if [[ -n "$name" ]]; then
     envfile="$(env_for "$name")"
     if [[ -n "$envfile" ]]; then
         [[ -f "$CONF_DIR/$envfile" ]] || die "missing hindsight profile: $CONF_DIR/$envfile"
@@ -107,7 +132,7 @@ systemctl --user restart "$unit"
 
 # Wait for the router to answer, plus any load-on-startup models the preset
 # declares. A preset with none must not require 'loaded' or this would hang.
-port=$([[ "$gpu" == gpu-0 ]] && echo 8080 || echo 8081)
+port="$(port_of "$gpu")"
 expect="$(awk '/^\[/{s=substr($0,2,length($0)-2)} /^load-on-startup/{print s}' "$PRESET_DIR/$gpu/$preset" | tr '\n' ' ')"
 until curl -s --max-time 3 "http://127.0.0.1:$port/v1/models" 2>/dev/null | python3 -c "
 import json,sys
@@ -117,13 +142,10 @@ sys.exit(0 if all(d.get(w)=='loaded' for w in want) else 1)
 " 2>/dev/null; do sleep 3; done
 echo "  :$port ready${expect:+ (loaded: $expect)}"
 
-# gpu-0 also carries Open WebUI, which takes noticeably longer than the router.
-if [[ "$gpu" == gpu-0 ]]; then
-    until [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3000/ 2>/dev/null)" == 200 ]]; do sleep 3; done
-    echo "  :3000 ready (open-webui)"
-fi
+# Open WebUI is its own unit now and is not restarted here, but it proxies this
+# router — so a model list it cached across the restart may be stale until reload.
 
-if [[ "$gpu" == gpu-1 && -n "$envfile" ]]; then
+if [[ -n "$envfile" ]]; then
     echo "restarting hindsight ..."
     systemctl --user restart hindsight.service
     until curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8888/health 2>/dev/null | grep -q 200; do sleep 3; done

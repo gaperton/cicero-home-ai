@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gpu-1/run.sh — llama-server on Vulkan1:8081 (Hindsight's router).
+# gpu-1/run.sh — llama-server on ROCm1:8081 (Hindsight's router).
 # Run by cicero-vulkan1.service. Foreground; exits if the server dies.
 set -euo pipefail
 
@@ -26,7 +26,7 @@ echo "gpu-1: $(basename "$(readlink -f "$PRESET")") (--models-max $MAX)"
     $SERVER_FLAGS \
     --models-max "$MAX" \
     --models-preset "$PRESET" \
-    --device Vulkan1 \
+    --device ROCm1 \
     --port 8081 &
 PIDS+=("$!")
 

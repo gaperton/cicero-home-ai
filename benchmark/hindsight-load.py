@@ -277,8 +277,17 @@ def post(url, body, timeout):
         return json.loads(resp.read())
 
 
+# Set from --model. A single-model llama-server infers the model from its own
+# command line, but a router (gpu-0-1/) serves several and rejects both /tokenize
+# and /v1/chat/completions with HTTP 400 unless the request names one.
+MODEL = None
+
+
 def count_tokens(base, text, timeout):
-    return len(post(f"{base}/tokenize", {"content": text}, timeout).get("tokens", []))
+    payload = {"content": text}
+    if MODEL:
+        payload["model"] = MODEL
+    return len(post(f"{base}/tokenize", payload, timeout).get("tokens", []))
 
 
 def calibrate(base, profile, system, target, timeout, seed=0):
@@ -330,6 +339,8 @@ def one_request(base, system, user, cfg, extra_body, timeout):
         "cache_prompt": True,
         "stream": False,
     }
+    if MODEL:
+        body["model"] = MODEL
     if cfg["temperature"] is not None:
         body["temperature"] = cfg["temperature"]
     if cfg["schema"] is not None:
@@ -374,6 +385,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", required=True, choices=sorted(PROFILES))
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--model", default=None,
+                    help="model id to address; required against a router (e.g. 'llm' "
+                         "on gpu-0-1's :8081), unnecessary for a single-model server")
     ap.add_argument("--port", type=int, default=8099)
     ap.add_argument("--concurrency", type=int, default=0,
                     help="0 = the profile's measured average overlap")
@@ -387,6 +401,8 @@ def main():
     ap.add_argument("--no-db", action="store_true", help="use templates/ instead of the DB")
     ap.add_argument("--timeout", type=float, default=300.0)
     args = ap.parse_args()
+    global MODEL
+    MODEL = args.model
 
     base = f"http://{args.host}:{args.port}"
     cfg = PROFILES[args.profile]

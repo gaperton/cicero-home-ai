@@ -6,13 +6,25 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LLAMA_DIR="$SCRIPT_DIR/llama.cpp"
 
-# Install system dependencies (tmux, mc, node, etc.) plus llama.cpp's Vulkan build deps
+# Install system dependencies (tmux, mc, node, etc.) plus llama.cpp's host build deps.
+# The GPU backend is ROCm/HIP; its SDK is NOT in the Ubuntu archive and is not
+# installed here — see the ROCm check below.
 apt-get update
 apt-get install -y ripgrep ffmpeg pciutils pipx tmux mc nodejs npm \
-    build-essential cmake ccache curl libcurl4-openssl-dev \
-    libvulkan-dev glslang-tools vulkan-tools mesa-vulkan-drivers
+    build-essential cmake ccache curl libcurl4-openssl-dev
 
-# Clone the llama.cpp checkout, built with the Vulkan backend (see .env).
+# llama.cpp is built with -DGGML_HIP=ON (see .env), so ROCm has to be installed
+# already, from AMD's own apt repo (https://repo.radeon.com) — the packages are
+# named amdrocm-*, not rocm-*, and the version moves independently of this repo.
+# Fail loudly rather than fall through to a build that dies in enable_language(HIP).
+if [[ ! -x /opt/rocm/llvm/bin/clang++ ]]; then
+    echo "install.sh: ROCm not found at /opt/rocm (need the HIP SDK, incl. rocblas/hipblas)." >&2
+    echo "  Install it from AMD's repo first, then re-run: https://rocm.docs.amd.com" >&2
+    exit 1
+fi
+echo "install.sh: ROCm found, GPU arch(s): $(/opt/rocm/llvm/bin/amdgpu-arch | sort -u | tr '\n' ' ')"
+
+# Clone the llama.cpp checkout, built with the ROCm/HIP backend (see .env).
 if [[ -d "$LLAMA_DIR/.git" ]]; then
     echo "llama.cpp checkout already exists at $LLAMA_DIR; skipping clone."
 else
