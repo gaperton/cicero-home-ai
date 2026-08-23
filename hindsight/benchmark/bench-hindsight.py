@@ -1,6 +1,7 @@
 """Operation-level Hindsight benchmark: Retain / Recall / Reflect / Consolidation.
 
-Mirrors the methodology already recorded in HINDSIGHT.md so the numbers are
+Mirrors the methodology recorded in
+../experiments/2026-08-installation-and-tuning-log.md so the numbers are
 comparable to the Gemma and Qwen tables: a bilingual three-item workload with an
 exact access code, one warm-up workflow plus three measured ones, each on its own
 disposable bank that is deleted afterwards.

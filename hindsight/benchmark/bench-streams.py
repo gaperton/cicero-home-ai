@@ -69,7 +69,7 @@ def burst_mixed(base, model, pp_prompt, tg_gen, extra, timeout):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
-    ap.add_argument("--port", type=int, default=8081)
+    ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--pp-prompt", type=int, default=16384, help="pp-heavy prompt tokens")

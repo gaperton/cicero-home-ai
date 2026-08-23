@@ -10,7 +10,8 @@
 #
 # The workload here is instead reconstructed from the 480 real gpt-oss-20b calls
 # the `psychology` bank recorded in Hindsight's `llm_requests` table, and it
-# does not look like HINDSIGHT.md's "prefill dominates" section claims:
+# does not look like the old "prefill dominates" section in
+# ../experiments/2026-08-installation-and-tuning-log.md claims:
 #
 #   op             calls  %LLM time  in p50   cached  out p50/avg  concurrency
 #   consolidation   369      53%      5,493    44%     255 / 294    1.06 avg
@@ -77,10 +78,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$SCRIPT_DIR"
 
-LLAMA_DIR="$SCRIPT_DIR/../llama.cpp"
-MODELS_DIR="$SCRIPT_DIR/../models"
+LLAMA_DIR="$REPO_ROOT/llama.cpp"
+MODELS_DIR="$REPO_ROOT/models"
 TEMPLATES_DIR="$SCRIPT_DIR/../templates"
 LOADER="$SCRIPT_DIR/hindsight-load.py"
 
@@ -109,7 +111,7 @@ LLM_EXTRA_BODY_DEFAULT='{"chat_template_kwargs":{"reasoning_effort":"low"}}'
 LLM_EXTRA_BODY="${LLM_EXTRA_BODY:-$LLM_EXTRA_BODY_DEFAULT}"
 
 if [[ ! -x "$BENCH_SERVER" ]]; then
-    echo "Error: $BENCH_SERVER not found. Run ../build.sh first." >&2
+    echo "Error: $BENCH_SERVER not found. Run $REPO_ROOT/build.sh first." >&2
     exit 1
 fi
 if [[ ! -f "$LOADER" ]]; then
@@ -121,7 +123,7 @@ mkdir -p "$REPORTS_DIR"
 
 # Thinking policy, and the one place this bench deliberately departs from the
 # presets. gpt-oss reasons at effort=low — it cannot be switched off, low is
-# its native output bound, it is what Hindsight sends, and HINDSIGHT.md records
+# its native output bound, it is what Hindsight sends, and the experiment log records
 # that raising it is net worse end to end. It rides in LLM_EXTRA_BODY above.
 #
 # Every other model has thinking turned OFF here. `-rea off` sets
@@ -148,7 +150,7 @@ GPTOSS_FLAGS="-np 3 -c 393216 -b 4096 -ub 2048 -ctk f16 -ctv f16 --temp 0.2 --ch
 GEMMA31_FLAGS="-np 2 -c 200000 -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --presence-penalty 0 $NO_THINK"
 # Gemma 26B candidate. --reasoning-budget is REQUIRED, not tuning: without it
 # a forced tool turn can collapse into an unbounded generation that holds a slot
-# past the client timeout. See notes/hindsight-gemma.md.
+# past the client timeout. See ../experiments/gemma4.md.
 GEMMA26_FLAGS="-np 3 -c 300000 -ctk f16 -ctv f16 --temp 0.2 --top-p 0.95 --top-k 64 --min-p 0.0 --presence-penalty 0 --reasoning-budget 1024 $NO_THINK"
 # Qwen Hindsight-candidate shape; this intentionally differs from the active
 # chat profile in gpu-0-1/combined.ini.

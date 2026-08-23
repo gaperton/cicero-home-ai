@@ -1,5 +1,9 @@
 # Running Hindsight against local Gemma 4
 
+> Historical experiment record. The current deployment uses the combined
+> `gpu-0-1/combined.ini` preset and GPT-OSS; commands and preset names below
+> describe the earlier test layout and are not current operating instructions.
+
 How to point Hindsight at `gemma4-26b-a4b-qat` on the Vulkan1 router, and what
 has to be in place for it to work.
 
@@ -166,14 +170,14 @@ In order:
 2. `grep reasoning-budget models-1-gemma.ini` — is it still set, and still 1024?
 3. Check for slots held after a client timeout:
    ```bash
-   curl -s http://127.0.0.1:8081/v1/models | python3 -c "import json,sys;[print(m['id'],m['status']['value']) for m in json.load(sys.stdin)['data']]"
+   curl -s http://127.0.0.1:8080/v1/models | python3 -c "import json,sys;[print(m['id'],m['status']['value']) for m in json.load(sys.stdin)['data']]"
    ```
    A wedged slot survives the client giving up; only a router restart clears it.
 4. `psql --dbname hindsight` — look for `output_tokens` near 4096 (the backstop
    firing) or missing rows entirely (a call that never returned records nothing).
 
 Capturing the exact failing request is the technique that cracked this: a logging
-proxy in front of `:8081` that writes each request body **before** forwarding, so
+proxy in front of `:8080` that writes each request body **before** forwarding, so
 a request that never returns is still on disk. `HINDSIGHT_API_LLM_DEBUG_DUMP_4XX`
 is useless here — it only fires on a 4xx, and this failure is a client-side wall
 timeout with no HTTP error at all.
@@ -193,4 +197,4 @@ timeout with no HTTP error at all.
 | Offering `done` on the forced turn | **11/12 hangs** — its `memory_ids` array is unbounded too |
 | `tool_choice: auto` instead of forcing | Stops the hang, but the model then answers in prose and calls no tool (24/24), raising `ReflectToolCallError` |
 
-Full detail: HINDSIGHT.md, "Gemma 4: rejection, root cause, and fix".
+Full detail: `2026-08-installation-and-tuning-log.md`, "Gemma 4: rejection, root cause, and fix".

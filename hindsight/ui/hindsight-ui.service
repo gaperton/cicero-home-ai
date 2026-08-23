@@ -1,0 +1,19 @@
+[Unit]
+Description=Hindsight Control Plane Web UI
+After=network-online.target hindsight.service
+Wants=network-online.target hindsight.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gaperton/.local/share/hindsight-control-plane
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/home/gaperton/.config/hindsight/control-plane.env
+ExecStart=/home/gaperton/.local/share/hindsight-control-plane/node_modules/.bin/hindsight-control-plane --hostname 0.0.0.0 --port 9999 --api-url http://127.0.0.1:8888
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=default.target

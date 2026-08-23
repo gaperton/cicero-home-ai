@@ -2,9 +2,8 @@
 # gpu-0-1/run.sh — Open WebUI plus one llama-server router across both cards.
 # Run by cicero-home-ai.service. Foreground; exits if either child dies.
 #
-# Port 8081, not 8080, on purpose: the section names [llm] and [reranker] are
-# the ids Hindsight resolves, so keeping its port too means no HINDSIGHT_API_*
-# env change. Open WebUI listens on :3000 and points at the same router.
+# The combined router serves the public API on port 8080. Open WebUI listens on
+# :3000 and points at the same router.
 set -euo pipefail
 
 GPU_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,7 +16,7 @@ trap 'kill "${PIDS[@]}" 2>/dev/null' EXIT
 
 PRESET="${PRESET:-$GPU_DIR/active.ini}"
 [ -e "$PRESET" ] || { echo "gpu-0-1/run.sh: missing preset $PRESET" >&2; exit 1; }
-PORT="${PORT:-8081}"
+PORT="${PORT:-8080}"
 
 export PATH="$HOME/.local/bin:$PATH"
 export DATA_DIR="$HOME/.open-webui"

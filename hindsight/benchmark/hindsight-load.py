@@ -7,13 +7,14 @@ Hindsight puts on the llama.cpp router so a model or a server flag can be A/B'd
 without a Hindsight install, a bank, or a 300-candidate rerank in the way.
 
 What "Hindsight-shaped" means here, all of it measured and recorded in
-HINDSIGHT.md / gpu-0-1/combined.ini:
+../experiments/2026-08-installation-and-tuning-log.md and
+../../gpu-0-1/combined.ini:
 
-- **Decode-dominated, contrary to HINDSIGHT.md.** Over the 480 recorded calls,
+- **Decode-dominated, contrary to the old README claim.** Over the 480 recorded calls,
   uncached prompt tokens total ~1.71M and generated tokens ~170k; at this
   machine's measured 4,139 tok/s prefill and 134 tok/s decode that is ~430 s of
   prefill against ~1,270 s of decode. The "~90% prompt processing" line in
-  HINDSIGHT.md came from four hand-timed `hermes` calls with 23k prompts and
+  the installation log came from four hand-timed `hermes` calls with 23k prompts and
   50-250 outputs; the real per-bank mix is the other way round, mostly because
   Retain generates ~600 tokens off ~820 uncached prompt tokens. Both regimes
   are covered by the profiles below, and this is exactly why the MTP question
@@ -26,8 +27,8 @@ HINDSIGHT.md / gpu-0-1/combined.ini:
   Retain and 1.33 for Reflect — only Retain arrives in bursts. Each profile
   therefore defaults to its own measured concurrency; `--concurrency` overrides
   it to study the saturated case. The wall time of one such round is the metric.
-- **The real system prompts.** `templates/retain.md` and
-  `templates/consolidate.md` are Hindsight's own, ~2,400 tokens each, and they
+- **The real system prompts.** `../templates/retain.md` and
+  `../templates/consolidate.md` are Hindsight's own, ~2,400 tokens each, and they
   are a fixed shared prefix on every call of their kind.
 - **Strict structured output.** Hindsight runs with strict schemas enabled, so
   Retain and Consolidation decode under a JSON grammar. Grammar-constrained
@@ -46,8 +47,8 @@ HINDSIGHT.md / gpu-0-1/combined.ini:
 
 System prompts are read from the `llm_requests` table when Postgres is
 reachable (the system message is Hindsight's own template, not user content),
-falling back to `templates/*.md`. That matters for sizing: the captured
-`templates/retain.md` is ~9,970 chars while the prompt actually sent is ~7,166,
+falling back to `../templates/*.md`. That matters for sizing: the captured
+`../templates/retain.md` is ~9,970 chars while the prompt actually sent is ~7,166,
 and at a 2,365-token target the difference is most of the payload budget.
 
 The remaining approximation is Reflect's structure: it is really a 3-4 turn tool
@@ -83,7 +84,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = SCRIPT_DIR.parent / "templates"
 
 # --- Output schemas -------------------------------------------------------
-# Shaped after the field lists in templates/retain.md and templates/consolidate.md.
+# Shaped after the field lists in ../templates/retain.md and ../templates/consolidate.md.
 # The exact schema Hindsight sends is not captured; what matters for the
 # benchmark is that decoding runs under a JSON grammar of this complexity.
 RETAIN_SCHEMA = {
@@ -142,7 +143,7 @@ REFLECT_SYSTEM = """You are a memory reflection system. Answer the user's questi
 
 # Profile shapes, taken from the 480 real gpt-oss-20b calls the `psychology`
 # bank recorded in `llm_requests` (2026-08-05..06), not from the four hand-timed
-# calls in HINDSIGHT.md's "Prefill dominates" table. Those four came from the
+# calls in the installation log's "Prefill dominates" table. Those four came from the
 # `hermes` bank and are not representative: they made Retain look like a 23k-token
 # prefill job when it is really ~2.4k in / ~600 out.
 #
@@ -176,7 +177,7 @@ PROFILES = {
 # --- Payload material -----------------------------------------------------
 # Bilingual, because the deployment's retrieval and extraction are both
 # exercised across Russian and English (see the multilingual matrix in
-# HINDSIGHT.md). Mixed-script text also tokenizes less efficiently, which is
+# installation log). Mixed-script text also tokenizes less efficiently, which is
 # the realistic case here.
 PEOPLE = ["Daniel", "Anna", "Sergey", "Miriam", "Kolya", "Elena", "Tomas", "Дарья",
           "Игорь", "Наталья", "Priya", "Marek", "Оля", "Виктор", "Sasha", "Lena"]
@@ -232,7 +233,7 @@ def retain_blocks(rng, n):
 
 
 def consolidate_blocks(rng, n):
-    """`[uuid] fact (temporal fields)` lines, per templates/consolidate.md."""
+    """`[uuid] fact (temporal fields)` lines, per ../templates/consolidate.md."""
     out = []
     for _ in range(n):
         day = rng.randint(1, 28)
@@ -313,7 +314,7 @@ def system_prompt_from_db(db, operation, timeout=20):
     """The exact system message last sent for this operation, from llm_requests.
 
     Only `input->0`, which is Hindsight's own template — no bank content. Any
-    failure (no psql, no database, empty table) falls back to templates/.
+    failure (no psql, no database, empty table) falls back to ../templates/.
     """
     sql = ("SELECT input->0->>'content' FROM llm_requests "
            f"WHERE operation = '{operation}' AND jsonb_typeof(input) = 'array' "
@@ -387,7 +388,7 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--model", default=None,
                     help="model id to address; required against a router (e.g. 'llm' "
-                         "on gpu-0-1's :8081), unnecessary for a single-model server")
+                         "on gpu-0-1's :8080), unnecessary for a single-model server")
     ap.add_argument("--port", type=int, default=8099)
     ap.add_argument("--concurrency", type=int, default=0,
                     help="0 = the profile's measured average overlap")
@@ -398,7 +399,7 @@ def main():
     ap.add_argument("--templates-dir", default=str(TEMPLATES_DIR))
     ap.add_argument("--db", default="hindsight",
                     help="Postgres database to read the real system prompts from")
-    ap.add_argument("--no-db", action="store_true", help="use templates/ instead of the DB")
+    ap.add_argument("--no-db", action="store_true", help="use ../templates/ instead of the DB")
     ap.add_argument("--timeout", type=float, default=300.0)
     args = ap.parse_args()
     global MODEL

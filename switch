@@ -27,7 +27,7 @@ unit_of() {
 }
 port_of() {
     case "$1" in
-        gpu-0-1) echo 8081 ;;
+        gpu-0-1) echo 8080 ;;
         *)       echo "" ;;
     esac
 }
@@ -60,7 +60,7 @@ show_status() {
         echo "       available: $(list_presets "$gpu")"
     done
     echo "hindsight.env -> $([ -L "$ACTIVE_ENV" ] && basename "$(readlink -f "$ACTIVE_ENV")" || echo '(plain file)')"
-    echo "open-webui   -> $(unit_of gpu-0-1): $(service_state "$(unit_of gpu-0-1)") (:3000 -> :8081)"
+    echo "open-webui   -> $(unit_of gpu-0-1): $(service_state "$(unit_of gpu-0-1)") (:3000 -> :8080)"
     for port in $(for g in $ROUTERS; do port_of "$g"; done); do
         echo "  :$port"
         response="$(curl -s --max-time 3 "http://127.0.0.1:$port/v1/models" 2>/dev/null || true)"

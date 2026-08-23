@@ -14,9 +14,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$SCRIPT_DIR"
 
-PORT="${PORT:-8081}"
+PORT="${PORT:-8080}"
 REPEATS="${REPEATS:-3}"
 WARMUP="${WARMUP:-1}"
 CONCURRENCY="${CONCURRENCY:-}"      # empty = each profile's own recorded overlap
@@ -35,7 +36,7 @@ declare -A EXTRA=(
 ORDER=(llm qwen3.8-27b)
 
 curl -s --max-time 5 "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1 || {
-    echo "Error: no router on :$PORT — start the services first (../start.sh)." >&2; exit 1; }
+    echo "Error: no router on :$PORT — start the services first ($REPO_ROOT/start.sh)." >&2; exit 1; }
 
 mkdir -p "$REPORTS_DIR"
 rows="$(mktemp)"; trap 'rm -f "$rows"' EXIT
@@ -46,10 +47,10 @@ rows="$(mktemp)"; trap 'rm -f "$rows"' EXIT
     echo "| | |"
     echo "|---|---|"
     echo "| **Router** | live gpu-0-1 on :$PORT, all models resident |"
-    echo "| **llama.cpp** | $(git -C ../llama.cpp log -1 --format='%h (%cd)' --date=short 2>/dev/null || echo N/A) |"
+    echo "| **llama.cpp** | $(git -C "$REPO_ROOT/llama.cpp" log -1 --format='%h (%cd)' --date=short 2>/dev/null || echo N/A) |"
     echo "| **warmup / repeats** | $WARMUP / $REPEATS bursts |"
     echo "| **Concurrency** | ${CONCURRENCY:-per profile, from recorded overlap} |"
-    for f in ../gpu-0-1/active.ini; do echo "| **Preset** | $(basename "$(readlink -f "$f")") |"; done
+    for f in "$REPO_ROOT"/gpu-0-1/active.ini; do echo "| **Preset** | $(basename "$(readlink -f "$f")") |"; done
     echo
     echo "\`burst\` is the wall time of one concurrent round. \`mix, per 100 calls\`"
     echo "weights those by the recorded operation share (16 retain at concurrency 2,"

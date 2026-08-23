@@ -1,25 +1,26 @@
 # cicero-home-ai
 
-Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/llama.cpp) in router mode. Exposes an OpenAI-compatible API and a chat UI ([Open WebUI](https://github.com/open-webui/open-webui) on port 3000).
+Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/llama.cpp) in router mode. Exposes an OpenAI-compatible API, a chat UI ([Open WebUI](https://github.com/open-webui/open-webui) on port 3000), and the Hindsight Control Plane on port 9999.
 
 ## How it works
 
 `llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the requested model name, starting a model process when needed. `gpu-0-1/run.sh` sets `--models-max 3`; this startup-only option cannot live in the preset.
 
-The host has one combined topology in `gpu-0-1/`. One systemd user unit, `cicero-home-ai.service`, supervises Open WebUI and the router together. The router owns both ROCm cards, serves all three resident models on port 8081, and uses per-model placement from `combined.ini`. Open WebUI listens on port 3000 and points at that router.
+The host has one combined topology in `gpu-0-1/`. One systemd user unit, `cicero-home-ai.service`, supervises Open WebUI and the router together. The router owns both ROCm cards, serves all three resident models on port 8080, and uses per-model placement from `combined.ini`. Open WebUI listens on port 3000 and points at that router.
 
-**Open WebUI** runs on port 3000 against the combined router on port 8081, which Hindsight and direct API clients also use. The raw llama.cpp API is reachable on the LAN as `http://cicero.local:8081/v1`.
+**Open WebUI** runs on port 3000 against the combined router on port 8080, which Hindsight and direct API clients also use. The raw llama.cpp API is reachable on the LAN as `http://cicero.local:8080/v1`.
 
 | Script | What it does |
 |---|---|
 | `install.sh` | Install deps, clone the llama.cpp checkout, install Python tools, install and enable the systemd user service. Run once with `sudo`. |
 | `update.sh` | Sync the user unit, stop the service, rebuild, update models, and restart. |
+| `hindsight/update.sh` | Back up PostgreSQL, upgrade Hindsight and its matching Control Plane, then verify both services. |
 | `start.sh` | Start the service via `systemctl --user`. |
 | `stop.sh` | Stop the service via `systemctl --user`. |
 | `gpu-0-1/run.sh` | Start Open WebUI and the combined router in the foreground. Called by `cicero-home-ai.service`. |
 | `switch gpu-0-1 <preset>` | Point the router at a preset and restart it. No args = status. |
 | `benchmark/bench.sh` | Run `llama-bench` (single GPU, ROCm) and save a Markdown report under `benchmark/reports/`. |
-| `benchmark/bench-mtp.sh` | Boot `llama-server` per model/quant and measure MTP speculative-decoding speedup. |
+| `hindsight/benchmark/bench-mtp.sh` | Boot `llama-server` per model/quant and measure MTP speculative-decoding speedup on the Hindsight workload. |
 
 ## Usage
 
@@ -27,8 +28,23 @@ The host has one combined topology in `gpu-0-1/`. One systemd user unit, `cicero
 ./start.sh    # start the service
 ./stop.sh     # stop the service
 ./update.sh   # rebuild, update models, restart
-./gpu-0-1/run.sh   # foreground: Open WebUI :3000 + router :8081
+./gpu-0-1/run.sh   # foreground: Open WebUI :3000 + router :8080
 ```
+
+## Hindsight
+
+Hindsight is managed separately from the llama.cpp stack; the top-level
+`install.sh` does not install its API or Control Plane. For an existing Hindsight
+API installation, install the persistent Web UI and apply future upgrades with:
+
+```bash
+./hindsight/ui/install.sh
+./hindsight/update.sh           # latest matching API + Control Plane
+./hindsight/update.sh 0.9.1     # explicit version
+```
+
+See [`hindsight/README.md`](hindsight/README.md) for service configuration,
+access, verification, rollback, and benchmark details.
 
 ## Installation
 
@@ -115,11 +131,11 @@ The active preset is sized for two 32 GB cards in TTY mode. Running a desktop co
 
 | Router | Model id | Model |
 |---|---|---|
-| ROCm0+ROCm1 (:8081) | `qwen3.8-27b` | Qwen3.8 27B UD-Q5_K_M with built-in MTP, tensor split, 2 × 196608-token slots |
-| ROCm0+ROCm1 (:8081) | `llm` | GPT-OSS 20B UD-Q8_K_XL, 38/62 tensor split, 2 × 131072-token slots |
-| ROCm0 (:8081) | `reranker` | Qwen3-Reranker 0.6B Q8_0, one 4096-token slot, `/v1/rerank` for Hindsight |
+| ROCm0+ROCm1 (:8080) | `qwen3.8-27b` | Qwen3.8 27B UD-Q5_K_M with built-in MTP, tensor split, 2 × 196608-token slots |
+| ROCm0+ROCm1 (:8080) | `llm` | GPT-OSS 20B UD-Q8_K_XL, 38/62 tensor split, 2 × 131072-token slots |
+| ROCm0 (:8080) | `reranker` | Qwen3-Reranker 0.6B Q8_0, one 4096-token slot, `/v1/rerank` for Hindsight |
 
-Hindsight uses its `litellm` reranker provider with API base `http://127.0.0.1:8081/v1`, which maps directly to llama.cpp's `/v1/rerank`; no adapter is required. See [HINDSIGHT.md](HINDSIGHT.md) for the persistent environment settings, benchmark results, verification, and CPU rollback procedure.
+Hindsight uses its `litellm` reranker provider with API base `http://127.0.0.1:8080/v1`, which maps directly to llama.cpp's `/v1/rerank`; no adapter is required. All repository-owned Hindsight service files, prompts, experiments, and workload benchmarks live under [`hindsight/`](hindsight/README.md).
 
 ### Adding or changing models
 
@@ -159,7 +175,7 @@ start.sh / stop.sh          # systemd service control
 gpu-0-1/                    # the only GPU/service folder
   combined.ini              #   tensor-split chat + LLM, reranker on ROCm0
   active.ini                #   symlink to the active preset
-  run.sh                    #   Open WebUI :3000 + llama-server :8081
+  run.sh                    #   Open WebUI :3000 + llama-server :8080
   install-service.sh        #   install/update the unit; retire legacy units
   cicero-home-ai.service    #   the single systemd user unit
 llama.cpp/                  # llama.cpp source + build (cloned by install.sh, gitignored)
@@ -171,6 +187,15 @@ models/
     *.gguf                   # downloaded model files
 benchmark/
   bench.sh                   # llama-bench runner (single GPU, ROCm) using ../llama.cpp
-  bench-mtp.sh                 # MTP speculative-decoding benchmark, drives llama-server directly
-  reports/                    # generated benchmark reports
+  bench-split.sh             # compare one-card, layer-split, and tensor-split layouts
+  reports/                   # generated generic benchmark reports
+hindsight/
+  README.md                  # current deployment and operational commands
+  update.sh                  # backup + upgrade API and matching Control Plane
+  ui/
+    install.sh               # install the Control Plane and enable its user unit
+    hindsight-ui.service     # persistent Hindsight Web UI on :9999
+  benchmark/                 # Hindsight workload, concurrency, and end-to-end benchmarks
+  templates/                 # Retain, Consolidate, and gpt-oss prompt templates
+  experiments/               # dated investigations, measurements, and incidents
 ```

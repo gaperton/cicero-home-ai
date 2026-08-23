@@ -1,26 +1,38 @@
-# Hindsight server
+# Hindsight installation and tuning log — August 2026
 
-This machine runs a LAN-accessible Hindsight memory server backed by the localhost-only Ubuntu PostgreSQL service and the combined llama.cpp router.
+This is the historical installation, incident, benchmark, and tuning record that
+was formerly mixed into the operational README. It preserves measurements and
+discarded configurations; it does not define the current deployment. See
+[`../README.md`](../README.md) for current state.
+
+Paths and commands in this document are relative to the repository root unless
+an absolute path is shown.
 
 ## Architecture
 
 - Hindsight API: `http://cicero.local:8888` on the trusted LAN; `http://127.0.0.1:8888` locally
 - PostgreSQL: `127.0.0.1:5432` and the local Unix socket
-- LLM: combined llama.cpp router at `http://127.0.0.1:8081/v1`
-- LLM model: `gpt-oss-20b`
+- LLM: combined llama.cpp router at `http://127.0.0.1:8080/v1`
+- LLM model id: `llm` (`gpt-oss-20b`)
 - LLM router config: `gpu-0-1/combined.ini`; the router keeps the chat model, LLM, and reranker resident
 - Embeddings: `BAAI/bge-m3`, local CPU inference
 - Reranker: `qwen3-reranker-0.6b`, Q8_0 GGUF on ROCm0 through llama.cpp's `/v1/rerank` endpoint
 - Database: `hindsight`
 - PostgreSQL role: `gaperton`, authenticated through Unix-socket peer authentication
 
-Hindsight and the combined llama.cpp router are LAN-accessible at `cicero.local`. PostgreSQL remains bound to localhost. Open WebUI and Hindsight share the router on port 8081. Hindsight does not contain or require a PostgreSQL password.
+Hindsight and the combined llama.cpp router are LAN-accessible at `cicero.local`. PostgreSQL remains bound to localhost. Open WebUI and Hindsight share the router on port 8080. Hindsight does not contain or require a PostgreSQL password.
+
+The Hindsight Control Plane Web UI runs persistently at `http://cicero.local:9999`. It is a separate systemd user service, connects to the API over `http://127.0.0.1:8888`, and requires the access key stored in `/home/gaperton/.config/hindsight/control-plane.env`.
 
 ## Installed versions
 
-Verified on 2026-08-02:
+Verified on 2026-08-23:
 
-- Hindsight API: 0.8.6
+- Hindsight API: 0.9.1
+- Hindsight Control Plane: 0.9.1
+
+Dependency baseline recorded by the 2026-08-02 installation audit:
+
 - PostgreSQL: 18.4
 - pgvector: 0.8.1
 - `pg_trgm`: 1.6
@@ -31,9 +43,22 @@ Verified on 2026-08-02:
 
 The 2026-08-02 installation audit also verified that the Hindsight and PostgreSQL services are enabled and active, the OpenAPI document exposes 57 paths, and no warning-or-higher journal entries occurred after the current Hindsight activation.
 
-### No local patches — stock 0.8.6
+## Repository layout
 
-**This installation runs unmodified Hindsight 0.8.6**, verified end to end on 2026-08-03 with no patches applied; see the operation benchmark below for current figures. Keep it that way: a `pip install -U` silently reverts any local edit to `site-packages`, and there is no CI here to catch the drift.
+| Path | Purpose |
+| --- | --- |
+| `hindsight/update.sh` | Back up PostgreSQL, upgrade the API and version-matched Control Plane, then verify both services. |
+| `hindsight/ui/` | Persistent Control Plane installer and systemd user unit for port 9999. |
+| `hindsight/benchmark/` | Hindsight-shaped load generation, end-to-end checks, and generated reports. |
+| `hindsight/templates/` | Retain, Consolidate, and patched gpt-oss chat templates. |
+| `hindsight/experiments/` | Dated model investigations and deployment findings. |
+
+### No local patches — stock 0.9.1
+
+**This installation runs unmodified Hindsight 0.9.1.** The operation benchmark
+below was originally verified on stock 0.8.6 and is retained as historical
+deployment evidence. Keep the package unmodified: an upgrade silently reverts
+any local edit to `site-packages`, and there is no CI here to catch the drift.
 
 Two local patches existed and were both removed on 2026-08-03:
 
@@ -99,7 +124,7 @@ Persistent Hindsight settings in `/home/gaperton/.config/hindsight/hindsight.env
 
 ```dotenv
 HINDSIGHT_API_RERANKER_PROVIDER=litellm
-HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://127.0.0.1:8081/v1
+HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://127.0.0.1:8080/v1
 HINDSIGHT_API_RERANKER_LITELLM_MODEL=reranker
 HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC=3072
 HINDSIGHT_API_RERANKER_MAX_CANDIDATES=100
@@ -135,22 +160,25 @@ Do not change the embedding model casually after storing real data.
 
 ## LLM configuration
 
-Hindsight uses the secondary llama.cpp router so it does not contend with the primary endpoint:
+Hindsight shares the combined llama.cpp router with Open WebUI:
 
-- Endpoint: `http://127.0.0.1:8081/v1`
-- Model: `gpt-oss-20b` — Hindsight's own strongest official local recommendation, and the faster of the two working profiles (Reflect 22-30 s vs Gemma's 68-83 s). `gemma4-26b-a4b-qat` also works as of 2026-08-08 once its two mitigations are in place; see "Gemma 4: rejection, root cause, and fix" below and `notes/hindsight-gemma.md`.
+- Endpoint: `http://127.0.0.1:8080/v1`
+- Model id: `llm` (`gpt-oss-20b`) — Hindsight's own strongest official local recommendation, and the faster of the two working profiles (Reflect 22-30 s vs Gemma's 68-83 s). `gemma4-26b-a4b-qat` also works as of 2026-08-08 once its two mitigations are in place; see "Gemma 4: rejection, root cause, and fix" below and `hindsight/experiments/gemma4.md`.
 - Quantization: `UD-Q8_K_XL`
-- Hindsight LLM concurrency: 3 (`HINDSIGHT_API_LLM_MAX_CONCURRENT=3`) — matches the router's 3 slots exactly. The per-operation override vars (`HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `..._REFLECT_...`, `..._CONSOLIDATION_...`) exist in the Hindsight codebase but are unset here, so every LLM call (Retain, Reflect, Consolidation) shares the single global semaphore of 3 — there is no way for Hindsight to oversubscribe the slots.
-- Router slots: 3; `ctx-size = 300000` (100,000 tokens/slot)
+- Hindsight LLM concurrency: 3 (`HINDSIGHT_API_LLM_MAX_CONCURRENT=3`). The per-operation override vars (`HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `..._REFLECT_...`, `..._CONSOLIDATION_...`) are unset, so every LLM call shares the single global semaphore. The LLM has two router slots, so a third concurrent call queues.
+- Router slots: 2; `ctx-size = 262144` (131,072 tokens/slot)
 - Output bounding: `HINDSIGHT_API_LLM_EXTRA_BODY='{"chat_template_kwargs":{"reasoning_effort":"low"}}'`. This is gpt-oss's native mechanism and replaces the removed Reflect token cap. `enable_thinking` is a Gemma/Qwen flag and is a no-op for gpt-oss.
 - Continuous batching: enabled
 - Timeout: 300 seconds
 - Strict structured schemas: enabled
 - Speculative decoding: disabled because every locally tested draft depth reduced generation throughput
 
-### Prefill dominates the LLM cost
+### Historical prefill-heavy sample
 
-Hindsight's llama.cpp traffic is almost entirely prompt evaluation. Measured on the live server (2026-08-03):
+These four hand-timed calls were measured on the live server on 2026-08-03, but
+they are not representative of the full workload. The later `llm_requests`
+analysis in [`../benchmark/README.md`](../benchmark/README.md) shows the real operation
+mix is decode-dominated.
 
 | Prompt tokens | Prompt eval | Generated |
 | ---: | ---: | ---: |
@@ -159,7 +187,10 @@ Hindsight's llama.cpp traffic is almost entirely prompt evaluation. Measured on 
 | 14,398 | 5.28 s @ 2,725 tok/s | 110 tokens @ 132 tok/s |
 | 2,146 | 0.66 s @ 3,245 tok/s | 53 tokens @ 148 tok/s |
 
-Roughly 90% of a typical Retain or Consolidation call is prompt processing, so prefill throughput — not decode throughput — is the lever for Hindsight latency. The preset therefore sets `batch-size = 4096` and `ubatch-size = 2048` instead of llama.cpp's 2048/512 defaults.
+This small sample originally suggested that roughly 90% of a typical Retain or
+Consolidation call was prompt processing. Keep it only as historical evidence;
+use the database-derived benchmark workload for current tuning decisions. The
+preset uses `batch-size = 4096` and `ubatch-size = 2048`.
 
 llama.cpp's slot prefix cache does work where it can (`f_sim_best = 1.000` produces 1-token prompt evals on repeated prefixes), but Retain and Consolidation prompts carry distinct content each call and are fully reprocessed.
 
@@ -173,7 +204,7 @@ Hindsight's reranker is `qwen3-reranker-0.6b` (Q8_0 GGUF, `ggml-org/Qwen3-Rerank
 
 ```
 HINDSIGHT_API_RERANKER_PROVIDER=litellm
-HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://127.0.0.1:8081/v1
+HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://127.0.0.1:8080/v1
 HINDSIGHT_API_RERANKER_LITELLM_MODEL=reranker
 ```
 
@@ -207,6 +238,35 @@ Three findings worth keeping:
 **Measured impact**: per-candidate reranking cost dropped from ~788ms (CPU cross-encoder, 44 candidates in 34.7s) to ~48-50ms (GPU reranker) — roughly a 16-20x per-candidate speedup, verified both on a synthetic 150-document benchmark and against live Recall calls. Real end-to-end Recall latency did **not** drop by the same factor, because Hindsight caps reranking at `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` (config default `DEFAULT_RERANKER_MAX_CANDIDATES = 300`, in `memory_engine.py`) — candidates beyond that are pre-filtered by RRF score before the cross-encoder ever sees them, so this ceiling does not grow with bank size. A full 300-candidate Recall against the live `hermes` bank (433 candidates merged, 133 pre-filtered) measured ~14.8-15.1s post-fix, down from 30-70s+ observed pre-fix. Lowering `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` below 300 is the remaining lever if faster Recall is needed, at the cost of trusting RRF's cheaper ranking not to bury a relevant fact outside the reduced top-N.
 
 ## Service management
+
+Control Plane status and logs:
+
+```bash
+systemctl --user status hindsight-ui.service
+journalctl --user -u hindsight-ui.service -f
+```
+
+Install or update the version-pinned Control Plane and enable it at boot:
+
+```bash
+./hindsight/ui/install.sh
+```
+
+Upgrade the Hindsight API and matching Control Plane together. With no argument,
+the script resolves the latest stable API release from PyPI; pass a version to
+pin the upgrade explicitly. It creates a PostgreSQL dump before changing the API
+package and waits for both services to become healthy.
+
+```bash
+./hindsight/update.sh
+./hindsight/update.sh 0.9.1
+```
+
+The installer preserves an existing access key. To read it locally:
+
+```bash
+sed -n 's/^HINDSIGHT_CP_ACCESS_KEY=//p' ~/.config/hindsight/control-plane.env
+```
 
 Check status:
 
@@ -254,8 +314,8 @@ curl -fsS http://cicero.local:8888/health
 This endpoint verifies Hindsight and database-pool health; it does **not** verify the configured LLM. Check the router separately:
 
 ```bash
-curl -fsS http://127.0.0.1:8081/health
-curl -fsS http://127.0.0.1:8081/v1/models
+curl -fsS http://127.0.0.1:8080/health
+curl -fsS http://127.0.0.1:8080/v1/models
 ```
 
 Hindsight 0.8.6 also exposes `POST /v1/default/banks/{bank_id}/health/llm`, but this installation leaves it disabled. It returns HTTP 404 unless `HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=true` is configured. Retain, Recall, consolidation, and Reflect do not require that optional endpoint to be enabled.
@@ -328,8 +388,8 @@ Operational verification commands:
 ```bash
 pid=$(systemctl --user show hindsight.service -p MainPID --value)
 tr '\0' '\n' < "/proc/$pid/environ" | grep '^HINDSIGHT_API_RERANKER_'
-curl -fsS http://127.0.0.1:8081/v1/models
-curl -fsS http://127.0.0.1:8081/v1/rerank \
+curl -fsS http://127.0.0.1:8080/v1/models
+curl -fsS http://127.0.0.1:8080/v1/rerank \
   -H 'Content-Type: application/json' \
   -d '{"model":"qwen3-reranker-0.6b","query":"GPU model","top_n":2,"documents":["AMD Radeon AI PRO R9700","PostgreSQL database"]}'
 ```
@@ -354,7 +414,7 @@ Production `hermes` bank, three runs, all correct. The benchmark issues only Rec
 
 For comparison, the same benchmark on the **stock** template, before the fix described below: Reflect 12.553 s median on a disposable bank and 44.143 s on `hermes`, with runs spread 7.9-14.6 s and 24.0-53.8 s respectively. The custom template makes Reflect ~3.5x faster on small banks and ~21% faster on `hermes`, and collapses the variance.
 
-A note on the harness: the validity gate originally compared the access code as a plain ASCII substring, and gpt-oss renders it with a non-breaking hyphen (`ORION-7741`, U+2011). That marked correct answers INVALID and silently reduced the sample to a single run. `benchmark/bench-hindsight.py` now NFKC-normalises and folds typographic dashes and spaces before comparing. Any future check against model output should do the same.
+A note on the harness: the validity gate originally compared the access code as a plain ASCII substring, and gpt-oss renders it with a non-breaking hyphen (`ORION-7741`, U+2011). That marked correct answers INVALID and silently reduced the sample to a single run. `hindsight/benchmark/bench-hindsight.py` now NFKC-normalises and folds typographic dashes and spaces before comparing. Any future check against model output should do the same.
 
 Two measurement caveats, both of which invalidate naive readings:
 
@@ -419,7 +479,7 @@ Correctness is not affected — every configuration answered correctly 3/3, beca
 
 Sampling and reasoning effort cannot fix this, but the **prompt** can. Appending an explicit channel instruction to the system header takes the failing turn from 8.3% to 100% (12/12) in isolation, so the fix is delivered as a chat-template override — a server-side config change, not a Hindsight patch.
 
-`templates/gpt-oss-20b-harmony.jinja` is the model's own template, extracted from the GGUF, with one line added inside the existing `{%- if tools -%}` block so it is emitted **only when tools are present**:
+`hindsight/templates/gpt-oss-20b-harmony.jinja` is the model's own template, extracted from the GGUF, with one line added inside the existing `{%- if tools -%}` block so it is emitted **only when tools are present**:
 
 ```jinja
 {{- "\nCalls to these tools must go to the commentary channel: 'functions'." }}
@@ -512,7 +572,7 @@ terminated on a real bank. The cause was found, fixed, and validated on
 probe, and zero calls anywhere near the `n-predict` backstop. It needs two
 mitigations, both in place — the llama.cpp patch in `patches/` and
 `reasoning-budget` in the Gemma candidate configuration. gpt-oss remains production purely on
-speed. Setup: `notes/hindsight-gemma.md`. The investigation below is kept because
+speed. Setup: `hindsight/experiments/gemma4.md`. The investigation below is kept because
 several plausible-but-wrong diagnoses are recorded in it.
 
 `gemma4-26b-a4b-qat` was re-tried as the Hindsight LLM and reverted the same day.
@@ -536,7 +596,8 @@ Small banks hide this completely. A 3-item disposable bank passed
 Retain/Recall/Reflect/Consolidate cleanly (Reflect 2.4s average, 55 output tokens
 maximum). That is why the earlier `gemma-test-*` runs looked healthy. **Any future
 model swap must be validated against `psychology` or another large bank, not just
-the disposable-bank workflow** — `benchmark/e2e-psychology.py` does both.
+the disposable-bank workflow** — the validation harness belongs in
+`hindsight/benchmark/`.
 
 **Not an agentic loop — this was checked directly.** The obvious innocent
 explanation is that Reflect is agentic and Gemma simply takes many tool-call

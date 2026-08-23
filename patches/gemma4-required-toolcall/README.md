@@ -1,7 +1,7 @@
 # gemma4-required-toolcall
 
 Rationale for `llama-cpp.patch`, applied to `llama.cpp/` by `build.sh`.
-Deployment notes: `../../notes/hindsight-gemma.md`.
+Deployment notes: `../../hindsight/experiments/gemma4.md`.
 
 Draft PR body below. Rewrite it in your own words before submitting — llama.cpp
 prohibits AI-written PR descriptions (AGENTS.md), and the AI disclosure line is
