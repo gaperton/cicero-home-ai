@@ -40,11 +40,9 @@
 # on. `burst` per profile is the per-operation view; per-request pp/tg are
 # diagnostics. A row where tg goes up and the mix goes up is MTP losing.
 #
-# Each model runs under its own `gpu-1/*.ini` preset flags (slots, ctx, batch,
-# KV type, chat template, temp) — an A/B against a model that is not configured
-# the way it is deployed measures nothing. The presets used to live in a single
-# models-1.ini; they are now one file per profile under ../gpu-1/ (oss.ini,
-# gemma.ini, qwen.ini) plus the benchmark-phase presets answers.ini/judge.ini.
+# Each model runs with an embedded, model-specific profile (slots, ctx, batch,
+# KV type, chat template, temp). The deployed gpt-oss settings track
+# gpu-0-1/combined.ini; alternate profiles remain benchmark-only candidates.
 #
 # The Qwen models are A/B'd. Both bake their MTP head into the main gguf
 # (qwen35.nextn_predict_layers=1, verified in each checkpoint), so --spec-type
@@ -88,7 +86,7 @@ LOADER="$SCRIPT_DIR/hindsight-load.py"
 
 BENCH_SERVER="${BENCH_SERVER:-$LLAMA_DIR/llama-server}"
 DEVICE="${DEVICE:-ROCm1}"          # Hindsight's card
-FIT_TARGET_MIB="${FIT_TARGET_MIB:-512}"   # matches gpu-1/*.ini fit-target
+FIT_TARGET_MIB="${FIT_TARGET_MIB:-512}"
 PROFILES="${PROFILES:-retain consolidate reflect}"   # also available: reflect-long (p90)
 # Empty = each profile uses its own measured average overlap (1 / 2 / 1). Set
 # it to 3 to study the saturated case (HINDSIGHT_API_LLM_MAX_CONCURRENT); the
@@ -139,26 +137,23 @@ mkdir -p "$REPORTS_DIR"
 NO_THINK="-rea off"
 
 # label|model|draft|server_flags
-# server_flags otherwise mirror each model's gpu-1/*.ini preset. Anything
-# omitted there (batch/ubatch on the Gemma dense model, for instance) is
-# deliberately omitted here too — measured net-negative, see the preset comments.
-# gpu-1/oss.ini [llm]
+# server_flags preserve the model profiles used for the earlier comparisons.
+# Anything omitted (batch/ubatch on the Gemma dense model, for instance) is
+# deliberate and measured net-negative.
+# Deployed gpt-oss [llm] profile (expanded to three slots for this isolated bench).
 GPTOSS_FLAGS="-np 3 -c 393216 -b 4096 -ub 2048 -ctk f16 -ctv f16 --temp 0.2 --chat-template-file $TEMPLATES_DIR/gpt-oss-20b-harmony.jinja"
-# No Hindsight-LLM preset any more — the 31B moved to gpu-1/judge.ini in the
-# benchmark judge role (np 2, c 65536, f16 KV, reasoning auto), which is a
-# different workload. These are its old [llm] flags, kept unchanged so this
+# The dense 31B is not deployed as Hindsight's LLM. These are its old [llm]
+# flags, kept unchanged so this
 # baseline row stays comparable with the earlier reports in reports/.
 GEMMA31_FLAGS="-np 2 -c 200000 -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --presence-penalty 0 $NO_THINK"
-# gpu-1/gemma.ini [llm]. --reasoning-budget is REQUIRED, not tuning: without it
+# Gemma 26B candidate. --reasoning-budget is REQUIRED, not tuning: without it
 # a forced tool turn can collapse into an unbounded generation that holds a slot
 # past the client timeout. See notes/hindsight-gemma.md.
 GEMMA26_FLAGS="-np 3 -c 300000 -ctk f16 -ctv f16 --temp 0.2 --top-p 0.95 --top-k 64 --min-p 0.0 --presence-penalty 0 --reasoning-budget 1024 $NO_THINK"
-# gpu-1/qwen.ini [llm] shape. The 27B has no :8081 profile of its own — the only
-# 27B preset is the single-slot gpu-0/active.ini [qwen3.8-27b] — so it runs
-# under the Hindsight Qwen profile's flags, which is the deployment it is a
-# candidate for.
+# Qwen Hindsight-candidate shape; this intentionally differs from the active
+# chat profile in gpu-0-1/combined.ini.
 QWEN38_FLAGS="-np 2 -c 200000 -b 4096 -ub 2048 -ctk q8_0 -ctv q8_0 --temp 0.2 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 0 $NO_THINK"
-# gpu-1/qwen.ini [llm]
+# Qwen 3.5 candidate.
 QWEN35_FLAGS="-np 2 -c 200000 -b 4096 -ub 2048 -ctk q8_0 -ctv q8_0 --temp 0.2 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 0 $NO_THINK"
 # No preset yet. Hybrid Mamba/attention MoE (nemotron_h_moe, 128 experts, 6
 # active + 1 shared), so it borrows the qwen3.6-35b-a3b profile's slot/ctx/KV
@@ -228,7 +223,7 @@ start_server() {
     local model="$1" preset_flags="$2" spec_flags="$3"
 
     SERVER_LOG="$(mktemp)"
-    # Everything gpu-1/*.ini puts in [*], plus the two flags every model
+    # Shared production-style defaults, plus the two flags every model
     # section sets. --cache-ram -1 is not cosmetic: llama.cpp defaults to an
     # 8192 MiB prompt cache, and this workload leans on the host-RAM cache to
     # keep the Retain and Consolidation system prefixes alive while the two
@@ -353,7 +348,7 @@ write_system_info() {
         echo "| **Concurrency** | ${CONCURRENCY:-per profile, from recorded overlap} |"
         echo "| **warmup / repeats** | $WARMUP / $REPEATS bursts |"
         echo "| **spec-draft-n-max** | $SPEC_DRAFT_N_MAX |"
-        echo "| **KV / batch / slots** | per model, from gpu-1/*.ini |"
+        echo "| **KV / batch / slots** | embedded per-model profiles |"
         echo "| **extra body** | \`$LLM_EXTRA_BODY\` |"
         echo "| **thinking** | gpt-oss: effort=low; all others: \`$NO_THINK\` |"
         echo

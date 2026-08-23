@@ -4,21 +4,19 @@ Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/ll
 
 ## How it works
 
-`llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the model name in the request; when a model isn't loaded, the router starts a child process for it and proxies the request. `--models-max` is hardcoded in each `gpu-N/run.sh` (1 on gpu-0, 2 on gpu-1); it cannot be set inside a preset, because the router reads it before presets load.
+`llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the requested model name, starting a model process when needed. `gpu-0-1/run.sh` sets `--models-max 3`; this startup-only option cannot live in the preset.
 
-The host runs the **combined topology**: one router (`cicero-vulkan1.service`, `gpu-0-1/run.sh`) owns both cards and serves port 8081 with all three models resident — `qwen3.8-27b` on ROCm0, `llm` and `reranker` on ROCm1. Open WebUI is a separate unit (`cicero-vulkan0.service`, `gpu-0-1/webui.sh`) on port 3000, pointed at that same router, so its model list now includes `llm` and `reranker` alongside the chat model. Hindsight is untouched by the change: `llm`/`reranker` keep their ids and their port. Each model is still pinned to a single card — no layer-split — but placement lives in the preset's `device =` keys rather than on the command line. The `cicero-vulkan{0,1}` unit names and `logs/vulkan{0,1}.log` are historical, predating both the ROCm move and this one, and are kept so installed units and `./switch` keep working.
+The host has one combined topology in `gpu-0-1/`. One systemd user unit, `cicero-home-ai.service`, supervises Open WebUI and the router together. The router owns both ROCm cards, serves all three resident models on port 8081, and uses per-model placement from `combined.ini`. Open WebUI listens on port 3000 and points at that router.
 
 **Open WebUI** runs on port 3000 against the combined router on port 8081, which Hindsight and direct API clients also use. The raw llama.cpp API is reachable on the LAN as `http://cicero.local:8081/v1`.
 
 | Script | What it does |
 |---|---|
 | `install.sh` | Install deps, clone the llama.cpp checkout, install Python tools, install and enable the systemd user service. Run once with `sudo`. |
-| `update.sh` | Stop the service, rebuild, update models, and restart the service. |
+| `update.sh` | Sync the user unit, stop the service, rebuild, update models, and restart. |
 | `start.sh` | Start the service via `systemctl --user`. |
 | `stop.sh` | Stop the service via `systemctl --user`. |
-| `gpu-0-1/run.sh` | Start the combined router (both cards, port 8081) in the foreground. Called by `cicero-vulkan1.service`. |
-| `gpu-0-1/webui.sh` | Start Open WebUI alone on port 3000, pointed at :8081. Called by `cicero-vulkan0.service`. |
-| `gpu-N/run.sh` | Dormant single-card runners, kept for reverting to one-router-per-card. |
+| `gpu-0-1/run.sh` | Start Open WebUI and the combined router in the foreground. Called by `cicero-home-ai.service`. |
 | `switch gpu-0-1 <preset>` | Point the router at a preset and restart it. No args = status. |
 | `benchmark/bench.sh` | Run `llama-bench` (single GPU, ROCm) and save a Markdown report under `benchmark/reports/`. |
 | `benchmark/bench-mtp.sh` | Boot `llama-server` per model/quant and measure MTP speculative-decoding speedup. |
@@ -29,8 +27,7 @@ The host runs the **combined topology**: one router (`cicero-vulkan1.service`, `
 ./start.sh    # start the service
 ./stop.sh     # stop the service
 ./update.sh   # rebuild, update models, restart
-./gpu-0-1/run.sh   # foreground: combined router, both cards, :8081
-./gpu-0-1/webui.sh # foreground: Open WebUI only, :3000
+./gpu-0-1/run.sh   # foreground: Open WebUI :3000 + router :8081
 ```
 
 ## Installation
@@ -55,7 +52,7 @@ and `install.sh` checks for `/opt/rocm` and stops if it is missing rather than f
    ./update.sh
    ```
 
-The systemd services run `gpu-0/run.sh` and `gpu-1/run.sh`. Build and server flags live in `.env`; see [Configuration](#configuration).
+The `cicero-home-ai.service` user unit runs `gpu-0-1/run.sh`. Build and server flags live in `.env`; see [Configuration](#configuration).
 
 ## Booting into TTY and auto-starting the server
 
@@ -95,9 +92,9 @@ On next boot, selecting the GRUB entry boots into TTY and the systemd user servi
 Useful commands:
 
 ```bash
-systemctl --user status cicero-vulkan0.service cicero-vulkan1.service
-journalctl --user -u cicero-vulkan1.service -f
-tail -f logs/vulkan0.log logs/vulkan1.log
+systemctl --user status cicero-home-ai.service
+journalctl --user -u cicero-home-ai.service -f
+tail -f logs/gpu-0-1.log
 ```
 
 ## Configuration
@@ -108,23 +105,19 @@ tail -f logs/vulkan0.log logs/vulkan1.log
 |---|---|---|
 | `CMAKE_FLAGS` | `-DGGML_HIP=ON -DGPU_TARGETS=gfx1201 -DGGML_NATIVE=1 ...` | CMake flags for the llama.cpp build. |
 | `ROCM_PATH` / `HIP_PATH` / `HIPCXX` | `/opt/rocm`, `/opt/rocm`, `/opt/rocm/llvm/bin/clang++` | HIP toolchain, exported so cmake's `enable_language(HIP)` finds ROCm's clang. |
-| `SERVER_FLAGS` | `--host 0.0.0.0 --models-max 1` | Flags passed to each `llama-server` instance. |
+| `SERVER_FLAGS` | `--host 0.0.0.0 --models-max 1` | Base flags passed to `llama-server`; `run.sh` overrides `--models-max` to 3. |
 
-**`gpu-0/` / `gpu-1/`** — each GPU owns its presets, its `active.ini` symlink and its systemd unit. `model =` paths inside a preset stay relative to the repo root, because each `run.sh` cds there before launching. Each instance is pinned to one GPU on the CLI (see `gpu-N/run.sh`), so presets must fit a single 32GB card — no `split-mode=layer`.
+**`gpu-0-1/`** owns the preset, its `active.ini` symlink, the runner, and the service unit. `model =` paths inside the preset stay relative to the repo root because `run.sh` changes there before launching. Device and split settings belong in each model section; do not pass a global `--device`, which would override them.
 
 ## Models
 
-Each preset must fit a single 32 GB card, since instances are pinned one-per-GPU (no `split-mode=layer`). Sized for TTY mode; if running from a desktop session, reduce `fit-target` in the corresponding preset to account for the ~2–4 GB consumed by the desktop.
+The active preset is sized for two 32 GB cards in TTY mode. Running a desktop consumes roughly 2–4 GB of VRAM and may require smaller contexts.
 
 | Router | Model id | Model |
 |---|---|---|
-| ROCm0 (:8081) | `qwen3.8-27b` | Qwen3.8 27B UD-Q6_K with built-in MTP, 2 slots, context autofit (117248/slot measured) |
-| ROCm1 (:8081) | `llm` | GPT-OSS 20B UD-Q8_K_XL, 2 slots, 262144 total = 131072/slot |
-| ROCm1 (:8081) | `reranker` | Qwen3-Reranker 0.6B Q8_0, 8 slots, kv-unified 32768, `/v1/rerank` for Hindsight |
-
-Dormant single-card presets remain in `gpu-0/` (`default.ini`: `qwen3.8-27b`, `gemma4-31b`) and `gpu-1/` (`oss.ini`, `gemma.ini`, `qwen.ini`, `answers.ini`, `judge.ini`).
-
-The files are independent: instance 0 contains the dense presets, while instance 1 contains the Hindsight-oriented MoE presets and GPU reranker. The instance-1 router allows two resident models; the normal pair is `gemma4-26b-a4b` plus `qwen3-reranker-0.6b`. Open WebUI lists only the instance-0 presets; instance 1 remains available to Hindsight and direct API clients. Context is auto-fit to available VRAM (`fit-target = 256` in each file).
+| ROCm0+ROCm1 (:8081) | `qwen3.8-27b` | Qwen3.8 27B UD-Q5_K_M with built-in MTP, tensor split, 2 × 196608-token slots |
+| ROCm0+ROCm1 (:8081) | `llm` | GPT-OSS 20B UD-Q8_K_XL, 38/62 tensor split, 2 × 131072-token slots |
+| ROCm0 (:8081) | `reranker` | Qwen3-Reranker 0.6B Q8_0, one 4096-token slot, `/v1/rerank` for Hindsight |
 
 Hindsight uses its `litellm` reranker provider with API base `http://127.0.0.1:8081/v1`, which maps directly to llama.cpp's `/v1/rerank`; no adapter is required. See [HINDSIGHT.md](HINDSIGHT.md) for the persistent environment settings, benchmark results, verification, and CPU rollback procedure.
 
@@ -138,7 +131,7 @@ Hindsight uses its `litellm` reranker provider with API base `http://127.0.0.1:8
 
 The optional fourth column renames the downloaded file locally. Run `./models/update.sh` to download models without rebuilding, or use the top-level `./update.sh` workflow.
 
-**2.** Add a preset section to a `gpu-0/` or `gpu-1/` preset:
+**2.** Add a preset section to `gpu-0-1/combined.ini`:
 
 ```ini
 [my-model@q5]
@@ -160,24 +153,15 @@ repeat-penalty = 1.0
 .env                        # ROCm cmake flags + HIP toolchain env + SERVER_FLAGS
 build.sh                    # git pull + rebuild
 install.sh                  # first-time setup (deps, clone, systemd service)
-switch                      # ./switch gpu-1 qwen — repoint a GPU and restart only its service
+switch                      # select/reload the combined preset and show status
 update.sh                   # stop, rebuild, update models, start
 start.sh / stop.sh          # systemd service control
-gpu-0-1/                    # ACTIVE — one router, both cards, :8081
-  combined.ini              #   qwen3.8-27b on ROCm0, llm + reranker on ROCm1
+gpu-0-1/                    # the only GPU/service folder
+  combined.ini              #   tensor-split chat + LLM, reranker on ROCm0
   active.ini                #   symlink to the active preset
-  run.sh                    #   llama-server, --models-max 3, no --device
-  webui.sh                  #   Open WebUI only, :3000 -> :8081
-gpu-0/                      # dormant single-card preset
-  default.ini               #   chat models + batch-* judge/answer models
-  active.ini                #   symlink to the active preset
-  run.sh                    #   Open WebUI + llama-server ROCm0:8080
-  cicero-vulkan0.service    #   user unit — now runs gpu-0-1/webui.sh
-gpu-1/                      # dormant single-card presets
-  {oss,gemma,qwen}.ini      #   Hindsight profiles
-  active.ini                #   symlink to the active preset
-  run.sh                    #   llama-server ROCm1:8081
-  cicero-vulkan1.service    #   user unit — now runs gpu-0-1/run.sh
+  run.sh                    #   Open WebUI :3000 + llama-server :8081
+  install-service.sh        #   install/update the unit; retire legacy units
+  cicero-home-ai.service    #   the single systemd user unit
 llama.cpp/                  # llama.cpp source + build (cloned by install.sh, gitignored)
 models/
   list.txt                  # tab-separated HuggingFace model manifest
@@ -189,5 +173,4 @@ benchmark/
   bench.sh                   # llama-bench runner (single GPU, ROCm) using ../llama.cpp
   bench-mtp.sh                 # MTP speculative-decoding benchmark, drives llama-server directly
   reports/                    # generated benchmark reports
-systemd/
 ```

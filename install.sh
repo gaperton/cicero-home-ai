@@ -48,26 +48,8 @@ sudo -u "$SUDO_USER" pipx ensurepath
 # Create logs directory
 sudo -u "$SUDO_USER" mkdir -p "$SCRIPT_DIR/logs"
 
-# Install and enable the systemd user service
-USER_SYSTEMD_DIR="$SUDO_HOME/.config/systemd/user"
-sudo -u "$SUDO_USER" mkdir -p "$USER_SYSTEMD_DIR"
-run_user() { sudo -u "$SUDO_USER" XDG_RUNTIME_DIR="/run/user/$SUDO_UID" "$@"; }
-
-# Retire the pre-split single unit if this host is being upgraded.
-if [[ -f "$USER_SYSTEMD_DIR/cicero-home-ai.service" ]]; then
-    run_user systemctl --user disable --now cicero-home-ai.service || true
-    rm -f "$USER_SYSTEMD_DIR/cicero-home-ai.service"
-fi
-
-# Each GPU folder carries its own preset(s) and its own unit.
-for gpu in gpu-0 gpu-1; do
-    for src in "$SCRIPT_DIR/$gpu"/*.service; do
-        unit="$(basename "$src")"
-        sed "s|/home/gaperton/cicero-home-ai|$SCRIPT_DIR|g" "$src" > "$USER_SYSTEMD_DIR/$unit"
-        chown "$SUDO_USER:$SUDO_USER" "$USER_SYSTEMD_DIR/$unit"
-    done
-done
+# Install and enable the systemd user service.
+run_user() { sudo -u "$SUDO_USER" HOME="$SUDO_HOME" XDG_RUNTIME_DIR="/run/user/$SUDO_UID" "$@"; }
 loginctl enable-linger "$SUDO_USER"
-run_user systemctl --user daemon-reload
-run_user systemctl --user enable cicero-vulkan0.service cicero-vulkan1.service
+run_user "$SCRIPT_DIR/gpu-0-1/install-service.sh"
 echo "Systemd user service installed and enabled. Run ./update.sh to build and start."

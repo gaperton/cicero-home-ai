@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# stop.sh — Stop both per-GPU llama-server services.
+# stop.sh — Stop the combined AI service.
 set -euo pipefail
 
-systemctl --user stop cicero-vulkan0.service cicero-vulkan1.service
+systemctl --user stop cicero-home-ai.service
 echo "Stopped."

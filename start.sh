@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# start.sh — Start both per-GPU llama-server services.
+# start.sh — Start the combined AI service.
 set -euo pipefail
 
-systemctl --user start cicero-vulkan0.service cicero-vulkan1.service
+systemctl --user start cicero-home-ai.service
 echo "Started. Status: ./switch"

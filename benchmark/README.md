@@ -8,12 +8,12 @@ with, so a number measured here is a number the deployment can actually reach.
 | --- | --- |
 | `bench.sh` | raw `llama-bench` prefill/decode per model and quant, one GPU |
 | `bench-split.sh` | the same prefill/decode, one model at a time, three ways: one card, `-sm layer`, `-sm tensor` |
-| `bench-mtp.sh` | MTP (self-speculative decoding) A/B **on the Hindsight workload**, per model, under that model's `gpu-1/*.ini` preset flags |
+| `bench-mtp.sh` | MTP (self-speculative decoding) A/B **on the Hindsight workload**, with per-model server flags embedded in the script |
 | `hindsight-load.py` | the load generator behind `bench-mtp.sh`: replays Hindsight's request shape against any `llama-server` |
 | `bench-hindsight.py` | end-to-end against the real Hindsight service (banks, Recall, rerank), not the router |
 
 `bench-split.sh` answers a different question from the rest: not *which model*
-but *which layout*. It refuses to run while `cicero-vulkan1.service` is up, since
+but *which layout*. It refuses to run while `cicero-home-ai.service` is up, since
 that unit holds both cards, and it samples GTT around every run — a model that
 spills into host memory measures the PCIe bus rather than the GPU, and the report
 marks any such run invalid rather than letting the number stand.
@@ -128,7 +128,7 @@ The hit boundaries land exactly where the split predicts:
 | reflect | 8,417 chars | not reported | — |
 
 The two different prefixes alternate on the same router without permanently
-evicting each other because `models-1.ini`'s `[*]` sets `cache-ram = -1`: an
+evicting each other because `gpu-0-1/combined.ini`'s `[*]` sets `cache-ram = -1`: an
 evicted slot prefix is restored from host RAM instead of reprocessed. Any
 benchmark that sets `cache_prompt: false`, or that varies the system prompt
 between requests, roughly doubles the prefill it measures and is not measuring
@@ -204,6 +204,4 @@ decode rises and the mix rises is losing.
 **An unloaded card is not an idle test bed.** Stop `cicero-home-ai.service` and
 `hindsight.service` before benchmarking — `bench-mtp.sh` warns if they are up
 and prints GTT before each load, because a GTT spill (not VRAM exhaustion) is
-what silently halved throughput in earlier contaminated runs. Two measured
-examples of numbers that were wrong for this reason are recorded in
-`models-1.ini`'s `[gemma4-31b-qat]` comments.
+what silently halved throughput in earlier contaminated runs.

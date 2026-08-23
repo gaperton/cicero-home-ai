@@ -32,8 +32,8 @@ OUTFILE="${OUTFILE:-$REPORTS_DIR/bench-split-$(date +%Y%m%d-%H%M%S).md}"
 
 [[ -x "$BENCH" ]] || { echo "Error: $BENCH not found. Run ../build.sh first." >&2; exit 1; }
 
-if systemctl --user is-active --quiet cicero-vulkan1.service; then
-    echo "Error: cicero-vulkan1.service is running — it holds both cards." >&2
+if systemctl --user is-active --quiet cicero-home-ai.service; then
+    echo "Error: cicero-home-ai.service is running — it holds both cards." >&2
     echo "  Run ../stop.sh first, and ../start.sh when the benchmark finishes." >&2
     exit 1
 fi

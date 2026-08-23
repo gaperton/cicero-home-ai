@@ -1,0 +1,18 @@
+[Unit]
+Description=Cicero Open WebUI and llama-server (ROCm0+ROCm1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gaperton/cicero-home-ai
+ExecStart=/home/gaperton/cicero-home-ai/gpu-0-1/run.sh
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+KillMode=control-group
+StandardOutput=append:/home/gaperton/cicero-home-ai/logs/gpu-0-1.log
+StandardError=append:/home/gaperton/cicero-home-ai/logs/gpu-0-1.log
+
+[Install]
+WantedBy=default.target

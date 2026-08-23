@@ -7,7 +7,7 @@ Hindsight puts on the llama.cpp router so a model or a server flag can be A/B'd
 without a Hindsight install, a bank, or a 300-candidate rerank in the way.
 
 What "Hindsight-shaped" means here, all of it measured and recorded in
-HINDSIGHT.md / models-1.ini:
+HINDSIGHT.md / gpu-0-1/combined.ini:
 
 - **Decode-dominated, contrary to HINDSIGHT.md.** Over the 480 recorded calls,
   uncached prompt tokens total ~1.71M and generated tokens ~170k; at this
@@ -468,7 +468,13 @@ def main():
     # concurrent Hindsight operations, not what one idle slot can do. prompt_n
     # is llama.cpp's *processed* count, so cache hits are correctly excluded.
     agg_pp = sum(r["prompt_n"] for r in per_req) / len(walls) / wall_med if wall_med else 0.0
+    # Aggregate decode, the counterpart of agg_pp: total tokens generated per burst
+    # divided by the burst's wall time. With concurrency > 1 this is what the card
+    # actually delivers; the `tg` column is one stream's rate and understates it.
+    agg_tg = sum(r["predicted_n"] for r in per_req) / len(walls) / wall_med if wall_med else 0.0
 
+    print(f"  agg over burst: pp={agg_pp:.1f} t/s  tg={agg_tg:.1f} t/s  "
+          f"(conc={concurrency}, burst={wall_med:.2f}s)", file=sys.stderr)
     print("\t".join([
         f"{med(r['prompt_n'] for r in per_req):.0f}",
         f"{med(r['cache_n'] for r in per_req):.0f}",
@@ -477,6 +483,7 @@ def main():
         f"{med(r['predicted_n'] for r in per_req):.0f}",
         f"{wall_med:.2f}",
         f"{agg_pp:.2f}",
+        f"{agg_tg:.2f}",
         accept,
         str(len(errors)),
         str(concurrency),

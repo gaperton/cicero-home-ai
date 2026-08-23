@@ -1,20 +1,20 @@
 # Hindsight server
 
-This machine runs a LAN-accessible Hindsight memory server backed by the localhost-only Ubuntu PostgreSQL service and the secondary llama.cpp router.
+This machine runs a LAN-accessible Hindsight memory server backed by the localhost-only Ubuntu PostgreSQL service and the combined llama.cpp router.
 
 ## Architecture
 
 - Hindsight API: `http://cicero.local:8888` on the trusted LAN; `http://127.0.0.1:8888` locally
 - PostgreSQL: `127.0.0.1:5432` and the local Unix socket
-- LLM: secondary llama.cpp router at `http://127.0.0.1:8081/v1`
+- LLM: combined llama.cpp router at `http://127.0.0.1:8081/v1`
 - LLM model: `gpt-oss-20b`
-- LLM router config: `models-1.ini`; the secondary router allows two resident models so the LLM and the reranker can coexist
+- LLM router config: `gpu-0-1/combined.ini`; the router keeps the chat model, LLM, and reranker resident
 - Embeddings: `BAAI/bge-m3`, local CPU inference
-- Reranker: `qwen3-reranker-0.6b`, Q8_0 GGUF on Vulkan1 through llama.cpp's `/v1/rerank` endpoint
+- Reranker: `qwen3-reranker-0.6b`, Q8_0 GGUF on ROCm0 through llama.cpp's `/v1/rerank` endpoint
 - Database: `hindsight`
 - PostgreSQL role: `gaperton`, authenticated through Unix-socket peer authentication
 
-Hindsight and the llama.cpp routers are LAN-accessible at `cicero.local`. PostgreSQL remains bound to localhost. The secondary router is excluded from Open WebUI and reserved for Hindsight and direct API clients. Hindsight does not contain or require a PostgreSQL password.
+Hindsight and the combined llama.cpp router are LAN-accessible at `cicero.local`. PostgreSQL remains bound to localhost. Open WebUI and Hindsight share the router on port 8081. Hindsight does not contain or require a PostgreSQL password.
 
 ## Installed versions
 
@@ -93,7 +93,7 @@ The deployment is optimized for memories and queries that mix Russian and Englis
 
 ### Reranker
 
-Hindsight uses the multilingual `Qwen3-Reranker-0.6B` Q8_0 GGUF preset in `models-1.ini`. Hindsight 0.8.6 is directly compatible with llama.cpp reranking: its `litellm` reranker provider posts to `{API_BASE}/rerank`, so an API base ending in `/v1` reaches llama.cpp's `/v1/rerank`. No protocol adapter or Hindsight code patch is required.
+Hindsight uses the multilingual `Qwen3-Reranker-0.6B` Q8_0 GGUF preset in `gpu-0-1/combined.ini`. Hindsight 0.8.6 is directly compatible with llama.cpp reranking: its `litellm` reranker provider posts to `{API_BASE}/rerank`, so an API base ending in `/v1` reaches llama.cpp's `/v1/rerank`. No protocol adapter or Hindsight code patch is required.
 
 Persistent Hindsight settings in `/home/gaperton/.config/hindsight/hindsight.env`:
 
@@ -105,7 +105,7 @@ HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC=3072
 HINDSIGHT_API_RERANKER_MAX_CANDIDATES=100
 ```
 
-The corresponding `models-1.ini` preset enables `reranking = true`, offloads all layers to Vulkan1, uses eight parallel slots, sets `ctx-size` to 32768, and sets `batch-size` and `ubatch-size` to 8192. The large physical batch is required for real Hindsight candidates: llama.cpp's default 512-token physical batch returned HTTP 500 when a query-document pair exceeded it, and reranking is non-causal so a pair must fit in a single physical batch. `run.sh` overrides the secondary router to `--models-max 2`, allowing `gpt-oss-20b` and `qwen3-reranker-0.6b` to remain loaded together instead of evicting each other on every Recall/LLM transition.
+The corresponding preset enables `reranking = true`, offloads all layers to ROCm0, uses one slot, and sets `ctx-size`, `batch-size`, and `ubatch-size` to 4096. The large physical batch is required for real Hindsight candidates: llama.cpp's default 512-token physical batch returned HTTP 500 when a query-document pair exceeded it, and reranking is non-causal so a pair must fit in a single physical batch. `run.sh` sets `--models-max 3`, allowing the chat model, Hindsight LLM, and reranker to remain loaded together.
 
 `HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC=3072` is a second, client-side guard on the same limit. Hindsight sends every candidate in one request and calls `raise_for_status()`, so a single overlong document would fail the whole Recall's reranking; this truncates it instead. Keep it below the per-slot context to leave room for the query and chat template.
 
@@ -163,13 +163,13 @@ Roughly 90% of a typical Retain or Consolidation call is prompt processing, so p
 
 llama.cpp's slot prefix cache does work where it can (`f_sim_best = 1.000` produces 1-token prompt evals on repeated prefixes), but Retain and Consolidation prompts carry distinct content each call and are fully reprocessed.
 
-The secondary router previously also offered `gemma4-26b-a4b` and `qwen3.6-35b-a3b`; both were removed from `models-1.ini`. With `--models-max 2` any client requesting a third model on :8081 would evict `gpt-oss-20b` or the reranker mid-workload.
+The combined router keeps the chat model, Hindsight LLM, and reranker resident together with `--models-max 3`.
 
 The saved Qwen Q5_K_XL benchmark validated MTP depth 2 for generation throughput: 109.51 to 134.10 tokens/s, while prompt throughput fell from 368.73 to 312.94 tokens/s. The Gemma/Qwen comparison below shows that higher raw decode throughput does not guarantee reliable or lower-latency Reflect behavior.
 
 ### Reranker (GPU, replaces the CPU cross-encoder)
 
-Hindsight's reranker is `qwen3-reranker-0.6b` (Q8_0 GGUF, `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF`), served from the same Vulkan1 router as the LLM via llama.cpp's `/v1/rerank` endpoint, wired in through Hindsight's `litellm` reranker provider:
+Hindsight's reranker is `qwen3-reranker-0.6b` (Q8_0 GGUF, `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF`), served from the combined router via llama.cpp's `/v1/rerank` endpoint and wired in through Hindsight's `litellm` reranker provider:
 
 ```
 HINDSIGHT_API_RERANKER_PROVIDER=litellm
@@ -179,8 +179,8 @@ HINDSIGHT_API_RERANKER_LITELLM_MODEL=reranker
 
 This replaced the local CPU `BAAI/bge-reranker-v2-m3` path, which was the dominant cost in every slow Recall (one call spent 34.7s of its 34.88s total in the `[4] Reranking [cross-encoder]` stage alone).
 
-- Preset: `models-1.ini`, `[reranker]` (`qwen3-reranker-0.6b`) — `kv-unified = true`, `parallel = 8`, `ctx-size = 32768`, `batch-size = 4096`, `ubatch-size = 4096`
-- Requires `--models-max 2` on the Vulkan1 `llama-server` instance (set explicitly in `run.sh`, overriding `.env`'s global `--models-max 1`) so the LLM and the reranker stay resident simultaneously instead of evicting each other on every call — this is a **startup-only** flag; changing it needs `systemctl --user restart cicero-home-ai.service`, not just a router preset reload
+- Preset: `gpu-0-1/combined.ini`, `[reranker]` (`qwen3-reranker-0.6b`) — `parallel = 1`, `ctx-size = 4096`, `batch-size = 4096`, `ubatch-size = 4096`
+- Requires `--models-max 3` in `gpu-0-1/run.sh` so the chat model, LLM, and reranker remain resident together. This is a **startup-only** flag; changing it needs `systemctl --user restart cicero-home-ai.service`.
 - `ctx-size` is a **total**, divided across `parallel` slots. Read it per slot: the per-slot figure is the hard ceiling on one query+document pair, and llama.cpp rejects the **entire** rerank request with HTTP 400 `exceed_context_size_error` if any single pair exceeds it — not just the offending document. An earlier `ctx-size = 8192` with `parallel = 8` therefore gave 1,024 tokens per pair; verified live on 2026-08-03 with a three-document batch where one 2,115-token document failed all three. The longest stored `memory_units.text` at that time was 2,490 characters (~700 tokens), plus the `context: ` prefix Hindsight prepends — under the old ceiling, but with almost no headroom.
 - `batch-size`/`ubatch-size` must stay bounded (8192, not higher) and `ubatch-size` must remain **≥ the per-slot context**, since reranking is non-causal and a pair has to fit in a single physical batch. An earlier attempt at 8192 alongside `parallel=8` was fine, but pushing `parallel` to 32 with a proportionally larger `ctx-size` blew the combined footprint over the card and dumped ~30 GiB into GTT, silently degrading the LLM's own throughput (prompt processing dropped from ~200 tok/s to ~134 tok/s) alongside the reranker.
 
@@ -426,7 +426,7 @@ Sampling and reasoning effort cannot fix this, but the **prompt** can. Appending
 {{- "\nYou must always respond by calling a tool. To give your answer, call the 'done' tool. Never answer directly and never emit the 'final' channel while tools are available." }}
 ```
 
-Wired in through `chat-template-file` in the `[llm]` preset (`gpt-oss-20b` in `models-1-oss.ini`). Measured effect:
+Wired in through `chat-template-file` in `gpu-0-1/combined.ini`'s `[llm]` preset. Measured effect:
 
 | Metric | Stock template | Custom template |
 | --- | ---: | ---: |
@@ -451,7 +451,7 @@ This is a workaround, not a cure. The upstream fixes remain: extend the gpt-oss 
 
 ### Preset review against upstream guidance (2026-08-03)
 
-Checked the `[llm]` preset (`gpt-oss-20b` in `models-1-oss.ini`) against Hindsight's own docs and llama.cpp's gpt-oss guide. Three things came out of it.
+Checked `gpu-0-1/combined.ini`'s `[llm]` preset against Hindsight's own docs and llama.cpp's gpt-oss guide. Three things came out of it.
 
 **1. Quantized KV cache is wrong for gpt-oss — fixed.** llama.cpp's gpt-oss guide advises against `--cache-type-k/v` quantization for this model, and it is measurably worse here:
 
@@ -502,7 +502,7 @@ Recall is ~3x faster and the head of the ranking is nearly unchanged — top-3 i
 
 **Set to 100.** The tail it discards is largely the historical and superseded material this corpus is already known to carry, and Recall is the most frequently exercised operation. Reflect benefits too, because its tool calls invoke Recall internally: `hermes` Recall 13.207 s -> 4.367 s and Reflect 34.734 s -> 24.218 s. Raise it back to 300 if a lookup is ever found to miss a fact that RRF ranked below 100.
 
-Also noted but not changed: Hindsight's docs suggest `HINDSIGHT_API_LLM_MAX_CONCURRENT=2` for local use and "leave at least one slot free per shared client". This deployment runs 3 against `parallel = 3`, so Hindsight can saturate the router. That is deliberate, but `:8081` does serve other clients, and a concurrent writer was observed during benchmarking — if the Hermes agent starts contending for slots, drop this to 2.
+Also noted but not changed: Hindsight's docs suggest `HINDSIGHT_API_LLM_MAX_CONCURRENT=2` for local use and "leave at least one slot free per shared client". This deployment allows 3 against the LLM's `parallel = 2`, so one request may queue and Hindsight can occupy both slots. If the Hermes agent starts contending with other clients, drop this to 2.
 
 ### Gemma 4: rejection, root cause, and fix (2026-08-06 → 08-08)
 
@@ -511,13 +511,13 @@ terminated on a real bank. The cause was found, fixed, and validated on
 2026-08-08: **40/40 Reflects on `psychology` with zero hangs**, e2e 3/3 on every
 probe, and zero calls anywhere near the `n-predict` backstop. It needs two
 mitigations, both in place — the llama.cpp patch in `patches/` and
-`reasoning-budget` in `models-1-gemma.ini`. gpt-oss remains production purely on
+`reasoning-budget` in the Gemma candidate configuration. gpt-oss remains production purely on
 speed. Setup: `notes/hindsight-gemma.md`. The investigation below is kept because
 several plausible-but-wrong diagnoses are recorded in it.
 
 `gemma4-26b-a4b-qat` was re-tried as the Hindsight LLM and reverted the same day.
-It is now an on-demand-only preset in `models-1.ini`. Do not promote it again
-without reading this section.
+Its candidate preset is no longer part of the active layout. Do not promote it
+again without reading this section.
 
 **What prompted the retest.** The original rejection blamed llama.cpp #21375, and
 the old Gemma preset never set `reasoning`, so it inherited llama.cpp's
@@ -832,7 +832,7 @@ After the multilingual models were loaded and exercised (the disk/cache figures 
 - Inactive embedded pg0 rollback directory: approximately 139 MiB
 - The old BGE CPU reranker remains in the Hugging Face cache as rollback data but is no longer loaded by Hindsight
 
-Embeddings remain on CPU. Reranking now runs in llama.cpp on Vulkan1 alongside the Hindsight LLM.
+Embeddings remain on CPU. Reranking now runs in the combined llama.cpp router alongside the Hindsight LLM.
 
 ## Security notes
 
