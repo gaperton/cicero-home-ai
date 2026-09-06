@@ -62,9 +62,10 @@ The `[llm]` preset is tensor-split 38/62 across ROCm0 and ROCm1. It uses the
 custom `hindsight/templates/gpt-oss-20b-harmony.jinja` template, F16 KV cache,
 `batch-size = 4096`, and `ubatch-size = 2048`.
 
-The environment also sets global `reasoning_effort=low` through
-`HINDSIGHT_API_LLM_EXTRA_BODY` and a Reflect-specific reasoning effort of
-`medium`.
+The environment sets `reasoning_effort=low` globally through
+`HINDSIGHT_API_LLM_EXTRA_BODY` and explicitly for Reflect through
+`HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT`. Hindsight 0.9.1 sends the latter
+as a top-level request parameter, which takes precedence in llama.cpp.
 
 ### Embeddings
 
