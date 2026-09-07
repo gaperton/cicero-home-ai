@@ -9,10 +9,6 @@ Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-UD-Q6_K_XL.gguf
 Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	MTP/mtp-gemma-4-31B-it-Q8_0.gguf
 Gemma4-31B-QAT	unsloth/gemma-4-31B-it-qat-GGUF	gemma-4-31B-it-qat-UD-Q4_K_XL.gguf
 Gemma4-31B-QAT	unsloth/gemma-4-31B-it-qat-GGUF	MTP/mtp-gemma-4-31B-it-Q8_0.gguf
-DeepSeek-V4-Flash-0731	unsloth/DeepSeek-V4-Flash-0731-GGUF	UD-IQ3_XXS/DeepSeek-V4-Flash-0731-UD-IQ3_XXS-00001-of-00004.gguf
-DeepSeek-V4-Flash-0731	unsloth/DeepSeek-V4-Flash-0731-GGUF	UD-IQ3_XXS/DeepSeek-V4-Flash-0731-UD-IQ3_XXS-00002-of-00004.gguf
-DeepSeek-V4-Flash-0731	unsloth/DeepSeek-V4-Flash-0731-GGUF	UD-IQ3_XXS/DeepSeek-V4-Flash-0731-UD-IQ3_XXS-00003-of-00004.gguf
-DeepSeek-V4-Flash-0731	unsloth/DeepSeek-V4-Flash-0731-GGUF	UD-IQ3_XXS/DeepSeek-V4-Flash-0731-UD-IQ3_XXS-00004-of-00004.gguf
 Gemma4-26B-A4B	unsloth/gemma-4-26B-A4B-it-GGUF	gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf
 Gemma4-26B-A4B	unsloth/gemma-4-26B-A4B-it-GGUF	gemma-4-26B-A4B-it-UD-Q6_K_XL.gguf
 Gemma4-26B-A4B	unsloth/gemma-4-26B-A4B-it-GGUF	mtp-gemma-4-26B-A4B-it.gguf
@@ -24,4 +20,6 @@ Qwen3.6-35B-A3B	unsloth/Qwen3.6-35B-A3B-MTP-GGUF	Qwen3.6-35B-A3B-UD-Q5_K_S.gguf
 Qwen3-Reranker-0.6B	ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF	qwen3-reranker-0.6b-q8_0.gguf
 GPT-OSS-20B	unsloth/gpt-oss-20b-GGUF	gpt-oss-20b-UD-Q8_K_XL.gguf
 Nemotron-3.5-Lightning	unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF	NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-IQ4_NL.gguf
-
+Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf
+Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00002-of-00003.gguf
+Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00003-of-00003.gguf
