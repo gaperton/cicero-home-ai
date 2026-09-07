@@ -1,0 +1,35 @@
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 52f8d53672a..08e77e643a3 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -2040,7 +2040,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
+     const auto n_embd     = hparams.n_embd;
+     const auto n_embd_out = hparams.n_embd_out();
+ 
+-    bool has_logits     = true;
++    bool has_logits     = !cparams.embeddings;
+     bool has_embd       = cparams.embeddings;
+     bool has_embd_nextn = cparams.embeddings_nextn;
+ 
+diff --git a/src/models/qwen3.cpp b/src/models/qwen3.cpp
+index f4b2a2aebe0..ac5818df436 100644
+--- a/src/models/qwen3.cpp
++++ b/src/models/qwen3.cpp
+@@ -149,11 +149,13 @@ llama_model_qwen3::graph::graph(const llama_model & model, const llm_graph_param
+     cb(cur, "result_norm", -1);
+     res->t_embd = cur;
+ 
+-    // lm_head
+-    cur = build_lora_mm(model.output, cur, model.output_s);
++    if (!cparams.embeddings) {
++        // lm_head
++        cur = build_lora_mm(model.output, cur, model.output_s);
+ 
+-    cb(cur, "result_output", -1);
+-    res->t_logits = cur;
++        cb(cur, "result_output", -1);
++        res->t_logits = cur;
++    }
+ 
+     ggml_build_forward_expand(gf, cur);
+ }

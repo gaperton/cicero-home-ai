@@ -1,0 +1,25 @@
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index 15f651919e6..ab8764aab46 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -1149,7 +1149,6 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
+         case LLM_ARCH_BAILINGMOE3:
+         case LLM_ARCH_KIMI_K3:
+         case LLM_ARCH_QWEN3TTS:
+-        case LLM_ARCH_QWEN4EXP:   // TODO: fix test-llama-archs
+             return false;
+         default:
+             return true;
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index 8ace95f7347..1dc195c6dd8 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -373,6 +373,8 @@ llama_model_qwen4exp::graph::graph(const llama_model & model, const llm_graph_pa
+             ggml_reshape_3d(ctx0, inpL, n_embd, 1, n_tokens),
+             n_embd, hc, n_tokens, 1);
+     cb(res_hc, "hc_init", -1);
++    // make sure hc_init is in the same graph split as the first layer (-sm tensor)
++    ggml_build_forward_expand(gf, res_hc);
+ 
+     for (int il = 0; il < n_layer; ++il) {
+         res->t_layer_inp[il] = res_hc;
