@@ -38,14 +38,27 @@ apply_patches() {
         return 0
     fi
 
-    local p name
+    local p name f
     for p in "${patches[@]}"; do
         name="$(basename "$(dirname "$p")")/$(basename "$p")"
+        if git -C "$LLAMA_DIR" apply --reverse --check "$p" 2>/dev/null; then
+            echo "build.sh: $name already applied, skipping"
+            continue
+        fi
+
+        # Drop any file this patch CREATES before applying it. The `git checkout -- .`
+        # above reverts tracked files only, so files added by a patch (e.g.
+        # moe-expert-cache's src/llama-moecache.*) survive it as untracked leftovers,
+        # and `git apply` then refuses with "already exists". That failure is
+        # indistinguishable here from a genuine rebase failure, so without this the
+        # second build after adding such a patch dies with a misleading error.
+        while read -r f; do
+            [ -n "$f" ] && rm -f "$LLAMA_DIR/$f"
+        done < <(git -C "$LLAMA_DIR" apply --summary "$p" 2>/dev/null | awk '/^ create mode/{print $NF}')
+
         if git -C "$LLAMA_DIR" apply --check "$p" 2>/dev/null; then
             git -C "$LLAMA_DIR" apply "$p"
             echo "build.sh: applied $name"
-        elif git -C "$LLAMA_DIR" apply --reverse --check "$p" 2>/dev/null; then
-            echo "build.sh: $name already applied, skipping"
         else
             echo "build.sh: ERROR — $name no longer applies to llama.cpp@$(git -C "$LLAMA_DIR" rev-parse --short HEAD)" >&2
             echo "  If the fix landed upstream, delete patches/$(dirname "$name")/." >&2

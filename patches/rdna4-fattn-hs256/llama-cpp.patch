@@ -1,0 +1,191 @@
+diff --git a/ggml/src/ggml-cuda/fattn-mma-f16.cuh b/ggml/src/ggml-cuda/fattn-mma-f16.cuh
+index bc5060e81..9d124fdb5 100644
+--- a/ggml/src/ggml-cuda/fattn-mma-f16.cuh
++++ b/ggml/src/ggml-cuda/fattn-mma-f16.cuh
+@@ -158,8 +158,8 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
+ 
+     GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256,  8,  64, 2,  32, 128, 128, 128, 1, true);
+     GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 16,  64, 2,  32, 128, 128, 128, 1, true);
+-    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 32, 128, 2,  64, 128, 128,  64, 1, true);
+-    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 64, 128, 2,  64, 128, 128,  64, 1, true);
++    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 32, 128, 2,  64, 128, 128, 128, 1, true);
++    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 64, 128, 2,  64, 128, 128, 128, 1, true);
+ 
+     GGML_CUDA_FATTN_MMA_CONFIG_CASE(320, 256, 32, 128, 2,  32, 160, 128, 128, 1, true);
+     GGML_CUDA_FATTN_MMA_CONFIG_CASE(320, 256, 64, 128, 2,  32, 160, 128, 128, 1, true);
+@@ -636,6 +636,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+             flash_attn_ext_f16_load_mask<ncols1, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
+                 (mask_h, tile_mask, stride_mask, k_VKQ_0, k_VKQ_sup, jt*ncols1, ne01, indices);
+         }
++#if defined(AMD_WMMA_AVAILABLE)
++        // For large head dims, K/V bypass LDS staging below so sync mask here.
++        if (DKQ > 128 && (ncols2 > 1 || mask_h)) {
++            __syncthreads();
++        }
++#endif // AMD_WMMA_AVAILABLE
+     }
+ 
+     // For MLA K and V have the same data.
+@@ -646,6 +652,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+ 
+         if constexpr (nstages <= 1) {
+             const int k0_diff = k0_stop - k0_start;
++#if defined(AMD_WMMA_AVAILABLE)
++            if (DKQ <= 128) {
++#endif // AMD_WMMA_AVAILABLE
+             constexpr bool use_cp_async = nstages == 1;
+             flash_attn_ext_f16_load_tile<stride_tile_K, swz_K, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
+                 (K_h2 + k0_start, tile_K, k0_diff, stride_K, k_VKQ_0, k_VKQ_sup, indices);
+@@ -653,6 +662,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+                 cp_async_wait_all();
+             }
+             __syncthreads();
++#if defined(AMD_WMMA_AVAILABLE)
++            } else {
++                GGML_UNUSED(k0_diff);
++            }
++#endif // AMD_WMMA_AVAILABLE
+         }
+ 
+         // Calculate tile of KQ:
+@@ -663,6 +677,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+ #pragma unroll
+                 for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += T_A_KQ::J) {
+                     T_A_KQ K_A;
++#if defined(AMD_WMMA_AVAILABLE)
++                    // DKQ > 128: K is read straight from global memory, so it never enters
++                    // (and is never swizzled in) LDS. Otherwise take the upstream LDS path.
++                    if (DKQ > 128) {
++                        load_ldmatrix(K_A, K_h2 + int64_t(k_VKQ_0 + i_KQ_0)*stride_K + k_KQ_0, stride_K);
++                    } else
++#endif // AMD_WMMA_AVAILABLE
+                     ggml_cuda_fattn_smem_swizzle::load_ldmatrix<stride_tile_K, swz_K>(K_A, tile_K, i_KQ_0, k_KQ_0 - k0_start);
+                     if constexpr (cols_per_warp == 8) {
+                         mma(KQ_C[i_KQ_00/(np*T_A_KQ::I)], K_A, Q_B[k_KQ_0/T_A_KQ::J]);
+@@ -689,6 +710,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+                     const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*T_A_KQ::I;
+ 
+                     T_A_KQ K_A;
++#if defined(AMD_WMMA_AVAILABLE)
++                    // DKQ > 128: K is read straight from global memory, so it never enters
++                    // (and is never swizzled in) LDS. Otherwise take the upstream LDS path.
++                    if (DKQ > 128) {
++                        load_ldmatrix(K_A, K_h2 + int64_t(k_VKQ_0 + i_KQ_0)*stride_K + k_KQ_0, stride_K);
++                    } else
++#endif // AMD_WMMA_AVAILABLE
+                     ggml_cuda_fattn_smem_swizzle::load_ldmatrix<stride_tile_K, swz_K>(K_A, tile_K, i_KQ_0, k_KQ_0 - k0_start);
+ 
+                     if constexpr (cols_per_warp == 8) {
+@@ -708,6 +736,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+         }
+ 
+         if constexpr (nstages <= 1) {
++#if defined(AMD_WMMA_AVAILABLE)
++            if (DKQ <= 128)
++#endif // AMD_WMMA_AVAILABLE
+             __syncthreads(); // Only needed if tile_K == tile_V.
+         }
+     }
+@@ -998,6 +1029,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+ 
+         if constexpr (nstages <= 1) {
+             const int i0_diff = i0_stop - i0_start;
++#if defined(AMD_WMMA_AVAILABLE)
++            if (DKQ <= 128) {
++#endif // AMD_WMMA_AVAILABLE
+             if (!V_is_K_view || i0_stop > 2*nbatch_K2) {
+                 constexpr bool use_cp_async = nstages == 1;
+                 flash_attn_ext_f16_load_tile<stride_tile_V, swz_V, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
+@@ -1007,8 +1041,19 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+                 }
+                 __syncthreads();
+             }
++#if defined(AMD_WMMA_AVAILABLE)
++            } else {
++                GGML_UNUSED(i0_diff);
++            }
++#endif // AMD_WMMA_AVAILABLE
+         }
++#if defined(AMD_WMMA_AVAILABLE)
++        const half2 * tile_V_i = DKQ > 128 ?
++            V_h2 + int64_t(k_VKQ_0)*stride_V + i0_start/2 :
++            (!V_is_K_view || i0_stop > 2*nbatch_K2 ? tile_V : tile_V + i0_start/2);
++#else
+         const half2 * tile_V_i = !V_is_K_view || i0_stop > 2*nbatch_K2 ? tile_V : tile_V + i0_start/2;
++#endif // AMD_WMMA_AVAILABLE
+ 
+ #if defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
+ #pragma unroll
+@@ -1019,6 +1064,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+                 const int k0 = k00 + (threadIdx.y % np)*T_A_VKQ::J;
+ 
+                 T_A_VKQ A; // Transposed in SRAM but not in registers, gets transposed on load.
++#if defined(AMD_WMMA_AVAILABLE)
++                // DKQ > 128: tile_V_i points into global memory (see its definition above),
++                // so the swizzled-LDS accessor and its tile_V-relative offset do not apply.
++                if (DKQ > 128) {
++                    load_ldmatrix_trans(A, tile_V_i + 2*k0*stride_V + (i_VKQ_0 - i0_start)/2, stride_V);
++                } else
++#endif // AMD_WMMA_AVAILABLE
+                 ggml_cuda_fattn_smem_swizzle::load_ldmatrix_trans<stride_tile_V, swz_V>(A, tile_V, (int)(tile_V_i - tile_V) + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2);
+                 if constexpr (T_B_KQ::I == 8) {
+                     mma(VKQ_C[i_VKQ_0/T_A_VKQ::I], A, B[k00/(np*T_A_VKQ::J)]);
+@@ -1052,7 +1104,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+ #endif // defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
+ 
+         if constexpr (nstages <= 1) {
+-            __syncthreads(); // Only needed if tile_K == tile_V.
++#if defined(AMD_WMMA_AVAILABLE)
++            // When DKQ > 128, K/V bypass LDS so tile_K/tile_V barriers are unnecessary.
++            // However, tile_mask still lives in LDS — the next iteration's load_mask
++            // would overwrite it while a slow warp might still be reading it in softmax.
++            // Keep the barrier when mask is active to prevent this WAR hazard.
++            if (DKQ <= 128 || ncols2 > 1 || mask_h)
++#endif // AMD_WMMA_AVAILABLE
++            __syncthreads(); // Needed if tile_K == tile_V, or if tile_mask is in use.
+         }
+     }
+ #else
+@@ -1826,7 +1885,7 @@ static __global__ void flash_attn_ext_f16(
+ #endif // __CUDA_ARCH__ == GGML_CUDA_CC_TURING
+ 
+ #if defined(AMD_WMMA_AVAILABLE)
+-    if (ncols1*ncols2 < 16 || ncols2 == 1 || DKQ > 128) {
++    if (ncols1*ncols2 < 16 || ncols2 == 1 || DKQ > 256) {
+         NO_DEVICE_CODE;
+         return;
+     }
+diff --git a/ggml/src/ggml-cuda/fattn.cu b/ggml/src/ggml-cuda/fattn.cu
+index ae217fbd9..f2e82f5d7 100644
+--- a/ggml/src/ggml-cuda/fattn.cu
++++ b/ggml/src/ggml-cuda/fattn.cu
+@@ -645,8 +645,13 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+     }
+ 
+     // AMD WMMA is always faster than the tile kernel if the full tile width of 16 can be utilized.
+-    if ((amd_wmma_available(cc) && gqa_opt_applies && Q->ne[0] <= 128) && Q->ne[0] != 40 && Q->ne[0] != 72 && Q->ne[1] * gqa_ratio_eff > 8) {
+-        return BEST_FATTN_KERNEL_MMA_F16;
++    if (amd_wmma_available(cc) && gqa_opt_applies && Q->ne[0] != 40 && Q->ne[0] != 72) {
++        if (Q->ne[0] <= 128 && Q->ne[1] * gqa_ratio_eff > 8) {
++            return BEST_FATTN_KERNEL_MMA_F16;
++        }
++        if (Q->ne[0] <= 256 && Q->ne[1] * gqa_ratio_eff > 64) {
++            return BEST_FATTN_KERNEL_MMA_F16;
++        }
+     }
+ 
+     // If there are no tensor cores available, use the generic tile kernel:
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index cd16e5851..815dcc239 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10614,6 +10614,9 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+ 
+     // large-KV F16 cases (Qwen3.6-27B geometry and a llama-class control): the upstream matrix
+     // stops at kv=1024, blind to long-context FA bugs (e.g. the oneDNN SDPA ordering race on BMG).
++    // For DKQ>128 on AMD WMMA, K/V bypass LDS but tile_mask stays in shared memory, so the end-of-loop
++    // barrier must still fire when a mask is active. kv=16384 with gqa_ratio>=4 (ncols2>=4) gives 256+
++    // attention loop iterations, stressing this synchronization path.
+     for (int64_t kv : { 4096, 16384 }) {
+         test_cases.emplace_back(new test_flash_attn_ext(256, 256, 4, {6, 1}, kv, 512, true, false, 0, 0,
+                                                         GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16));
