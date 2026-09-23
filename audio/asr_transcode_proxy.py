@@ -1,45 +1,8 @@
 #!/usr/bin/env python3
-# audio/asr_transcode_proxy.py — sits in front of both audio backends and
-# gives clients (e.g. Open WebUI) one connection for chat, ASR and TTS:
-#   - the llama.cpp router (default :8080): chat, qwen3-asr transcription
-#   - qwentts.cpp's tts-server (default :8078): /v1/audio/speech, /v1/audio/voices
-#
-# ASR transcoding, why: llama.cpp's mtmd-helper only recognizes WAV/MP3/FLAC by
-# magic bytes (tools/mtmd/mtmd-helper.cpp, audio_helpers::is_audio_file) and
-# decodes via miniaudio, which has no WebM/Opus/OGG decoder. Browser
-# MediaRecorder audio (e.g. Open WebUI's mic input) is typically WebM/Opus, so
-# it never reaches the real decoder and mtmd falls through to an ffprobe-based
-# video path that doesn't extract audio at all. See the 2026-09-22 log entry:
-#   mtmd_helper_bitmap_init_from_buf: failed to decode buffer as either image/audio/video
-#
-# Routing: /v1/audio/transcriptions and /v1/audio/translations go to the
-# router (transcoded to WAV first, see above); every other /v1/audio/* path
-# goes to tts-server; everything else (chat, models, ...) goes to the router.
-# GET /v1/models merges both backends' model lists into one response so a
-# single Open WebUI connection shows chat, ASR and TTS models together.
-#
-# ASR response_format translation, why: llama.cpp's transcription endpoint
-# hard-rejects anything but response_format "json" (tools/server/server-chat.cpp,
-# "Only 'json' response_format is supported for transcription") while the real
-# OpenAI Whisper API — and clients written against it, e.g. Hermes Agent —
-# also expect "text"/"srt"/"vtt"/"verbose_json" to work. Always ask the router
-# for "json", then reshape the reply into whatever the client actually
-# requested. llama.cpp's response has no per-segment timing, so srt/vtt/
-# verbose_json are single-segment best-effort approximations, not real
-# timestamps.
-#
-# TTS shape translation, why: Open WebUI's OpenAI-compatible TTS client always
-# sends response_format "mp3" (open_webui/routers/audio.py, _tts_openai) and a
-# default voice ("alloy", from audio.tts.voice), but qwentts.cpp's tts-server
-# only speaks response_format wav/pcm natively and the loaded CustomVoice
-# model's 9 named speakers don't include "alloy" — any unknown voice name is a
-# hard 400. POST /v1/audio/speech is special-cased below: request wav from
-# tts-server regardless of what the client asked for, retry once with
-# DEFAULT_TTS_VOICE if the backend reports an unknown one, then ffmpeg-
-# transcode the wav to whatever format the client actually wanted. (Trade-off:
-# this buffers the whole response, so it doesn't support tts-server's
-# low-latency PCM streaming — fine for Open WebUI, which downloads a full file
-# anyway.)
+# audio/asr_transcode_proxy.py — one connection for chat, ASR and TTS: routes
+# to the llama.cpp router (chat, qwen3-asr) or qwentts.cpp's tts-server
+# (/v1/audio/speech, /v1/audio/voices), transcoding/reshaping where the two
+# backends don't speak the client's dialect. See audio/README.md for why.
 #
 #   ASR_PROXY_UPSTREAM=http://127.0.0.1:8080 \
 #   ASR_PROXY_TTS_UPSTREAM=http://127.0.0.1:8078 \
@@ -81,16 +44,9 @@ _valid_voices: set[str] | None = None
 
 
 async def get_valid_voices() -> set[str]:
-    # Cached for the proxy's lifetime: CustomVoice's speaker list is baked
-    # into the model and never changes without a tts-server restart (and
-    # /v1/audio/voices registration is refused outright on this model type,
-    # see speech()'s docstring). Used to catch a bad voice name *before*
-    # sending it, since an unrecognized one no longer comes back as a clean
-    # 400 "unknown voice" (that only happens for a model with zero speakers) —
-    # tools/tts-server.cpp instead hands any non-empty voice straight to
-    # p.speaker when qt_n_speakers() > 0, and an unknown name blows up deep in
-    # prompt-builder.h ("unknown speaker") as a generic 500 with no
-    # identifying substring to retry on.
+    # Cached for the proxy's lifetime — CustomVoice's speaker list is fixed
+    # per model load. Used to catch a bad voice name before sending it; see
+    # audio/README.md for why tts-server can't be trusted to reject one itself.
     global _valid_voices
     if _valid_voices is None:
         try:
@@ -174,13 +130,6 @@ async def speech(request: Request):
     # explicit seed from the client still wins.
     payload.setdefault("seed", DEFAULT_TTS_SEED)
 
-    # The CustomVoice model backing tts-server has 9 built-in named speakers
-    # (tools/tts-server.cpp maps "voice" straight to one when qt_n_speakers() >
-    # 0), so DEFAULT_TTS_VOICE just names one of them — no cloning/reference
-    # audio involved. Use it whenever the client sends no voice, or an invalid
-    # one (e.g. Open WebUI/Hermes's OpenAI-default "alloy") — checked against
-    # the real list rather than left for tts-server to reject, see
-    # get_valid_voices().
     payload.setdefault("voice", DEFAULT_TTS_VOICE)
     valid_voices = await get_valid_voices()
     if valid_voices and payload["voice"] not in valid_voices:

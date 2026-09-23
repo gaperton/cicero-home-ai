@@ -35,7 +35,8 @@ port_of() {
 # Preset name -> Hindsight env file; anything unlisted keeps the current env.
 env_for() {
     case "$1" in
-        combined) echo "hindsight-gpt-oss.env" ;;
+        combined)  echo "hindsight-gpt-oss.env" ;;
+        qwen3-asr) echo "hindsight-qwen3.8-27b.env" ;;
         *)     echo "" ;;
     esac
 }

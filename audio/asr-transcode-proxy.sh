@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# audio/asr-transcode-proxy.sh — run the audio-transcode proxy (see
-# asr_transcode_proxy.py for why it exists).
-#
-# Independent of cicero-home-ai.service on purpose: it must not take the
-# combined stack down if it crashes, and it only matters while an
-# audio-capable model (e.g. qwen3-asr) is loaded.
+# audio/asr-transcode-proxy.sh — run the audio-transcode proxy. See
+# audio/README.md for what it does and why it's a separate service.
 #
 #   ./audio/asr-transcode-proxy.sh
 set -euo pipefail
