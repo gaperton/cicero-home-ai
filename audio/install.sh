@@ -21,11 +21,15 @@ fi
 # build/ directory used by llama.cpp.
 ( cd "$TTS_DIR" && ./buildvulkan.sh )
 
-# Model weights (talker + shared tokenizer, base mode 1.7B Q8_0) from the
-# GGUF conversion of upstream's checkpoints; qwentts.cpp/models/ is gitignored.
+# Model weights (talker + shared tokenizer, CustomVoice mode 1.7B Q8_0) from
+# the GGUF conversion of upstream's checkpoints; qwentts.cpp/models/ is
+# gitignored. CustomVoice ships 9 built-in named speakers (serena, vivian,
+# uncle_fu, ryan, aiden, ono_anna, sohee, eric, dylan) selected per-request via
+# the "voice" field — no cloning/registration needed, unlike the base-mode
+# model this replaced.
 mkdir -p "$TTS_DIR/models"
 export PATH="$HOME/.local/bin:$PATH"
-hf download Serveurperso/Qwen3-TTS-GGUF qwen-talker-1.7b-base-Q8_0.gguf --local-dir "$TTS_DIR/models"
+hf download Serveurperso/Qwen3-TTS-GGUF qwen-talker-1.7b-customvoice-Q8_0.gguf --local-dir "$TTS_DIR/models"
 hf download Serveurperso/Qwen3-TTS-GGUF qwen-tokenizer-12hz-Q8_0.gguf --local-dir "$TTS_DIR/models"
 
 # Install/update both audio systemd units. Same sed-portable pattern as

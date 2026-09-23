@@ -31,14 +31,15 @@
 # TTS shape translation, why: Open WebUI's OpenAI-compatible TTS client always
 # sends response_format "mp3" (open_webui/routers/audio.py, _tts_openai) and a
 # default voice ("alloy", from audio.tts.voice), but qwentts.cpp's tts-server
-# only speaks response_format wav/pcm natively and the loaded base-mode model
-# has zero named speakers — any voice name is a hard 400. POST
-# /v1/audio/speech is special-cased below: request wav from tts-server
-# regardless of what the client asked for, retry once without "voice" if the
-# backend reports an unknown one, then ffmpeg-transcode the wav to whatever
-# format the client actually wanted. (Trade-off: this buffers the whole
-# response, so it doesn't support tts-server's low-latency PCM streaming —
-# fine for Open WebUI, which downloads a full file anyway.)
+# only speaks response_format wav/pcm natively and the loaded CustomVoice
+# model's 9 named speakers don't include "alloy" — any unknown voice name is a
+# hard 400. POST /v1/audio/speech is special-cased below: request wav from
+# tts-server regardless of what the client asked for, retry once with
+# DEFAULT_TTS_VOICE if the backend reports an unknown one, then ffmpeg-
+# transcode the wav to whatever format the client actually wanted. (Trade-off:
+# this buffers the whole response, so it doesn't support tts-server's
+# low-latency PCM streaming — fine for Open WebUI, which downloads a full file
+# anyway.)
 #
 #   ASR_PROXY_UPSTREAM=http://127.0.0.1:8080 \
 #   ASR_PROXY_TTS_UPSTREAM=http://127.0.0.1:8078 \
@@ -56,8 +57,8 @@ UPSTREAM = os.environ.get("ASR_PROXY_UPSTREAM", "http://127.0.0.1:8080")
 TTS_UPSTREAM = os.environ.get("ASR_PROXY_TTS_UPSTREAM", "http://127.0.0.1:8078")
 TRANSCODE_PATHS = {"/v1/audio/transcriptions", "/v1/audio/translations"}
 SPEECH_PATH = "/v1/audio/speech"
-DEFAULT_TTS_SEED = 42  # pinned so unseeded calls get a consistent voice, see speech()
-DEFAULT_TTS_VOICE = "freeman"  # registered clone, examples/freeman.*; see speech()
+DEFAULT_TTS_SEED = 42  # pinned so unseeded calls are reproducible, see speech()
+DEFAULT_TTS_VOICE = "aiden"  # built-in CustomVoice speaker; see speech()
 NATIVE_TTS_FORMATS = {"wav", "pcm"}
 FFMPEG_TTS_FORMATS = {
     "mp3": (["-f", "mp3"], "audio/mpeg"),
@@ -75,6 +76,29 @@ LANG_TAG_RE = re.compile(r"language \w+<asr_text>")
 app = FastAPI()
 client = httpx.AsyncClient(base_url=UPSTREAM, timeout=None)
 tts_client = httpx.AsyncClient(base_url=TTS_UPSTREAM, timeout=None)
+
+_valid_voices: set[str] | None = None
+
+
+async def get_valid_voices() -> set[str]:
+    # Cached for the proxy's lifetime: CustomVoice's speaker list is baked
+    # into the model and never changes without a tts-server restart (and
+    # /v1/audio/voices registration is refused outright on this model type,
+    # see speech()'s docstring). Used to catch a bad voice name *before*
+    # sending it, since an unrecognized one no longer comes back as a clean
+    # 400 "unknown voice" (that only happens for a model with zero speakers) —
+    # tools/tts-server.cpp instead hands any non-empty voice straight to
+    # p.speaker when qt_n_speakers() > 0, and an unknown name blows up deep in
+    # prompt-builder.h ("unknown speaker") as a generic 500 with no
+    # identifying substring to retry on.
+    global _valid_voices
+    if _valid_voices is None:
+        try:
+            r = await tts_client.get("/v1/audio/voices")
+            _valid_voices = {v["name"] for v in r.json().get("voices", [])}
+        except Exception:
+            return set()
+    return _valid_voices
 
 
 def pick_client(url_path: str) -> httpx.AsyncClient:
@@ -150,17 +174,17 @@ async def speech(request: Request):
     # explicit seed from the client still wins.
     payload.setdefault("seed", DEFAULT_TTS_SEED)
 
-    # base mode has no built-in named speakers and, with no voice/reference at
-    # all, samples an emergent, content-dependent timbre per call — a fixed
-    # seed alone pins the noise source, not a persistent identity, so it can
-    # still drift between sentences (confirmed: same seed, same PRNG draws,
-    # audibly different voice across two different sentences). DEFAULT_TTS_VOICE
-    # is a real cloned speaker (examples/freeman.*, registered via
-    # /v1/audio/voices) that conditions every call on the same 2048-value
-    # speaker embedding, which is a much stronger consistency guarantee. Use
-    # it whenever the client sends no voice, or an invalid one (e.g. Open
-    # WebUI/Hermes's OpenAI-default "alloy").
+    # The CustomVoice model backing tts-server has 9 built-in named speakers
+    # (tools/tts-server.cpp maps "voice" straight to one when qt_n_speakers() >
+    # 0), so DEFAULT_TTS_VOICE just names one of them — no cloning/reference
+    # audio involved. Use it whenever the client sends no voice, or an invalid
+    # one (e.g. Open WebUI/Hermes's OpenAI-default "alloy") — checked against
+    # the real list rather than left for tts-server to reject, see
+    # get_valid_voices().
     payload.setdefault("voice", DEFAULT_TTS_VOICE)
+    valid_voices = await get_valid_voices()
+    if valid_voices and payload["voice"] not in valid_voices:
+        payload["voice"] = DEFAULT_TTS_VOICE
 
     requested_format = payload.get("response_format") or "mp3"
     payload["response_format"] = requested_format if requested_format in NATIVE_TTS_FORMATS else "wav"

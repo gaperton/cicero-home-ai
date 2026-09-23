@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# audio/tts-server.sh — run the resident TTS server (1.7B base, Q8_0) on the
-# GPU via Vulkan, from the qwentts.cpp checkout in audio/qwentts.cpp (cloned
-# and built by audio/install.sh). Kept in its own systemd unit, independent of
-# cicero-home-ai.service and cicero-asr-proxy.service.
+# audio/tts-server.sh — run the resident TTS server (1.7B CustomVoice, Q8_0)
+# on the GPU via Vulkan, from the qwentts.cpp checkout in audio/qwentts.cpp
+# (cloned and built by audio/install.sh). Kept in its own systemd unit,
+# independent of cicero-home-ai.service and cicero-asr-proxy.service.
 #
-# Also registers examples/freeman.* as a named cloned voice on every start:
-# base mode has no built-in speakers and voice registration is in-memory only
-# (tools/tts-server.cpp, g_voices), so it does not survive a restart on its
-# own. audio/asr_transcode_proxy.py defaults every /v1/audio/speech request
-# without a valid voice to this one (DEFAULT_TTS_VOICE), for a consistent
-# cloned identity instead of base mode's emergent per-call timbre.
+# CustomVoice ships 9 built-in named speakers baked into the model weights
+# (serena, vivian, uncle_fu, ryan, aiden, ono_anna, sohee, eric, dylan — the
+# last two carry Mandarin dialect overrides), selected per-request via the
+# "voice" field, no registration or reference audio needed. This replaced the
+# base-mode model, which had zero built-in speakers and needed a cloned
+# reference voice (examples/freeman.*) registered over HTTP on every start to
+# get a consistent identity; tools/tts-server.cpp refuses /v1/audio/voices
+# registration outright on a non-base model, so that step is gone too.
+# audio/asr_transcode_proxy.py defaults every /v1/audio/speech request
+# without a valid voice to DEFAULT_TTS_VOICE ("aiden").
 #
 #   ./audio/tts-server.sh
 set -euo pipefail
@@ -30,20 +34,13 @@ export LD_LIBRARY_PATH="$PWD/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # serializes concurrent requests entirely (observed: 3 concurrent requests
 # took 2.68s total = sum of individual latencies, zero overlap).
 ./build/tts-server \
-    --model models/qwen-talker-1.7b-base-Q8_0.gguf \
+    --model models/qwen-talker-1.7b-customvoice-Q8_0.gguf \
     --codec models/qwen-tokenizer-12hz-Q8_0.gguf \
-    --alias qwen3-tts-base \
+    --alias qwen3-tts-customvoice \
     --host 127.0.0.1 \
     --port "$PORT" \
     --max-batch "$MAX_BATCH" &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null' EXIT
-
-until curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/v1/models"; do
-    sleep 1
-done
-curl -s -X POST "http://127.0.0.1:$PORT/v1/audio/voices" -H "Content-Type: application/json" \
-    -d "{\"name\":\"freeman\",\"ref_text\":\"$(cat examples/freeman.txt)\",\"spk_b64\":\"$(base64 -w0 examples/freeman.spk)\",\"rvq_b64\":\"$(base64 -w0 examples/freeman.rvq)\"}" \
-    > /dev/null
 
 wait "$SERVER_PID"

@@ -1,5 +1,5 @@
 [Unit]
-Description=Cicero TTS server (qwentts.cpp, Qwen3-TTS 1.7B base, Q8_0, Vulkan)
+Description=Cicero TTS server (qwentts.cpp, Qwen3-TTS 1.7B CustomVoice, Q8_0, Vulkan)
 After=network-online.target
 Wants=network-online.target
 
