@@ -238,7 +238,7 @@ start_server() {
     "$BENCH_SERVER" \
         -m "$model" \
         $preset_flags $spec_flags $EXTRA_SERVER_FLAGS \
-        -ngl 99 -fa on -dev "$DEVICE" --jinja --no-mmap --cont-batching \
+        -ngl 99 -fa on -dev "$DEVICE" --jinja -lm none --cont-batching \
         --cache-ram -1 --repeat-penalty 1.0 \
         -fit on -fitt "$FIT_TARGET_MIB" \
         --port "$PORT" > "$SERVER_LOG" 2>&1 &
