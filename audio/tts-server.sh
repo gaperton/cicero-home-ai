@@ -29,6 +29,13 @@ MAX_BATCH="${TTS_SERVER_MAX_BATCH:-4}"
 # (e.g. this reorg). Set LD_LIBRARY_PATH instead of relying on it/rebuilding.
 export LD_LIBRARY_PATH="$PWD/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+# Vulkan device 1 == ROCm1 (confirmed via VkPhysicalDevicePCIBusInfoPropertiesEXT:
+# Vulkan0 is PCI bus 0x0A, Vulkan1 is 0x0D, matching rocm-smi --showbus's GPU[0]/
+# GPU[1] exactly). Pinned here so gpu-0-1's router presets can load qwen3-asr and
+# qwen3-reranker onto ROCm0 without competing with this process for VRAM — see
+# gpu-0-1/qwen3-asr.ini. Without this, ggml-vulkan defaults to device 0 (ROCm0).
+export GGML_VK_VISIBLE_DEVICES=1
+
 # max-batch > 1 is real GPU batching (src/pipeline-tts.h: persistent
 # [hidden, max_batch] KV tensors, not just a deeper queue) - default 1
 # serializes concurrent requests entirely (observed: 3 concurrent requests
