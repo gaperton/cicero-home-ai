@@ -1,0 +1,18 @@
+[Unit]
+Description=Cicero TTS server (qwentts.cpp, Qwen3-TTS 1.7B base, Q8_0, Vulkan)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gaperton/cicero-home-ai/audio
+Environment=TTS_SERVER_PORT=8078
+ExecStart=/home/gaperton/cicero-home-ai/audio/tts-server.sh
+Restart=always
+RestartSec=10
+KillMode=control-group
+StandardOutput=append:/home/gaperton/cicero-home-ai/logs/tts-server.log
+StandardError=append:/home/gaperton/cicero-home-ai/logs/tts-server.log
+
+[Install]
+WantedBy=default.target

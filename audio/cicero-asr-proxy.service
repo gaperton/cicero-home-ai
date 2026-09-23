@@ -1,0 +1,20 @@
+[Unit]
+Description=Cicero audio proxy (ASR transcode + TTS routing in front of the router and tts-server)
+After=network-online.target cicero-home-ai.service cicero-tts-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gaperton/cicero-home-ai/audio
+Environment=ASR_PROXY_UPSTREAM=http://127.0.0.1:8080
+Environment=ASR_PROXY_TTS_UPSTREAM=http://127.0.0.1:8078
+Environment=ASR_PROXY_HOST=0.0.0.0
+Environment=ASR_PROXY_PORT=8079
+ExecStart=/home/gaperton/cicero-home-ai/audio/asr-transcode-proxy.sh
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/gaperton/cicero-home-ai/logs/asr-proxy.log
+StandardError=append:/home/gaperton/cicero-home-ai/logs/asr-proxy.log
+
+[Install]
+WantedBy=default.target

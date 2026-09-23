@@ -25,3 +25,5 @@ Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	UD-IQ4_XS/Qwen3.8-Flash-Next-
 Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00003-of-00003.gguf
 Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf
 Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	MTP/mtp-Qwen3.8-Flash-Next-shared-Q4_K_M.gguf
+Qwen3-ASR-1.7B	ggml-org/Qwen3-ASR-1.7B-GGUF	Qwen3-ASR-1.7B-Q8_0.gguf
+Qwen3-ASR-1.7B	ggml-org/Qwen3-ASR-1.7B-GGUF	mmproj-Qwen3-ASR-1.7B-Q8_0.gguf

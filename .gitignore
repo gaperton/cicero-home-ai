@@ -1,4 +1,6 @@
 llama.cpp
+audio/qwentts.cpp
+__pycache__
 *.gguf
 .cache
 .claude
