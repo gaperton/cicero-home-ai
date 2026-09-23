@@ -1,8 +1,8 @@
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 52f8d53672a..08e77e643a3 100644
+index 317459d3b..119b163d1 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -2040,7 +2040,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
+@@ -2070,7 +2070,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
      const auto n_embd     = hparams.n_embd;
      const auto n_embd_out = hparams.n_embd_out();
  
@@ -12,7 +12,7 @@ index 52f8d53672a..08e77e643a3 100644
      bool has_embd_nextn = cparams.embeddings_nextn;
  
 diff --git a/src/models/qwen3.cpp b/src/models/qwen3.cpp
-index f4b2a2aebe0..ac5818df436 100644
+index f4b2a2aeb..ac5818df4 100644
 --- a/src/models/qwen3.cpp
 +++ b/src/models/qwen3.cpp
 @@ -149,11 +149,13 @@ llama_model_qwen3::graph::graph(const llama_model & model, const llm_graph_param
