@@ -125,7 +125,9 @@ The hit boundaries land exactly where the split predicts:
 
 The two different prefixes alternate on the same router without permanently
 evicting each other because `gpu-0-1/combined.ini`'s `[*]` sets `cache-ram = -1`: an
-evicted slot prefix is restored from host RAM instead of reprocessed. Any
+evicted slot prefix is restored from host RAM instead of reprocessed. `[qwen3.8-27b]`
+overrides it with a 32 GiB cap: as a hybrid model its entries carry ~150 MB
+recurrent-state snapshots each, so uncapped it grew to ~100 GB of host RAM. Any
 benchmark that sets `cache_prompt: false`, or that varies the system prompt
 between requests, roughly doubles the prefill it measures and is not measuring
 this deployment.

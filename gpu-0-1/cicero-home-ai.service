@@ -11,6 +11,15 @@ Restart=always
 RestartSec=10
 TimeoutStopSec=30
 KillMode=control-group
+# Backstop so a runaway llama-server host cache cannot push Hindsight or
+# PostgreSQL into the kernel OOM killer: throttle at 72G, OOM-kill inside this
+# unit at 88G (OOMPolicy=stop + Restart=always then restarts the whole stack).
+# Anonymous memory is ~2G after startup. The 32 GiB [qwen3.8-27b] cache-ram adds
+# up to 32G, and each busy slot's own context checkpoints (up to 32 x ~150 MB,
+# outside cache-ram) up to ~4.8G more: worst case ~48G with 3 slots. The rest of
+# memory.current is reclaimable model-file page cache.
+MemoryHigh=72G
+MemoryMax=88G
 StandardOutput=append:/home/gaperton/cicero-home-ai/logs/gpu-0-1.log
 StandardError=append:/home/gaperton/cicero-home-ai/logs/gpu-0-1.log
 
