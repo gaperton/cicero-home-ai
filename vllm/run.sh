@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# vllm/run.sh — Open WebUI plus the vLLM server across both cards.
-# Run by cicero-vllm.service. Foreground; exits if either child dies.
+# vllm/run.sh — Open WebUI, the llama.cpp sidecar and the vLLM server across
+# both cards. Run by cicero-vllm.service. Foreground; exits if any child dies.
 #
 # vLLM serves the OpenAI API on :$PORT (8080, where the llama.cpp router used to
-# be) as model $SERVED_MODEL_NAME. Open WebUI listens on :3000 and points at it.
+# be) as model $SERVED_MODEL_NAME. The sidecar router ($LLAMA_PRESET: ASR and
+# the reranker) serves :$LLAMA_PORT. Open WebUI listens on :3000 and points at
+# vLLM.
 set -euo pipefail
 
 VLLM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,6 +19,10 @@ if ! id -Gn | tr ' ' '\n' | grep -qx docker && id -Gn "$(id -un)" | tr ' ' '\n' 
         && [ -z "${VLLM_RUN_SG:-}" ]; then
     exec env VLLM_RUN_SG=1 sg docker -c "exec '$0'"
 fi
+
+# SERVER_FLAGS and the HIP runtime env for the sidecar; not exported to compose.
+# shellcheck source=../.env
+source .env
 
 set -a
 # shellcheck source=config.env
@@ -41,6 +47,7 @@ case "$SPEC" in
 esac
 
 [ -f "$MODEL_PATH/config.json" ] || { echo "vllm/run.sh: no model at $MODEL_PATH; run ./vllm/install.sh" >&2; exit 1; }
+[ -z "${LLAMA_PRESET:-}" ] || [ -f "$REPO/$LLAMA_PRESET" ] || { echo "vllm/run.sh: missing sidecar preset $LLAMA_PRESET" >&2; exit 1; }
 mkdir -p "$CACHE_PATH"
 
 # A user unit cannot order itself after the system docker.service; wait for it.
@@ -68,6 +75,35 @@ export OPENAI_API_BASE_URLS="http://127.0.0.1:$PORT/v1"
 
 open-webui serve --port 3000 &
 PIDS+=("$!")
+
+# The sidecar goes first and must be fully resident before vLLM starts: vLLM's
+# startup check and its explicit KV pool assume this VRAM is already taken.
+if [ -n "${LLAMA_PRESET:-}" ]; then
+    echo "vllm: sidecar $LLAMA_PRESET on :$LLAMA_PORT"
+    # SERVER_FLAGS carries a --models-max of its own; ours follows it and wins.
+    # No --device: it would override every section's own placement.
+    # shellcheck disable=SC2086
+    "$REPO/llama.cpp/llama-server" \
+        $SERVER_FLAGS \
+        --models-max 2 \
+        --models-preset "$REPO/$LLAMA_PRESET" \
+        --port "$LLAMA_PORT" &
+    LLAMA_PID=$!
+    PIDS+=("$LLAMA_PID")
+    for _ in $(seq 120); do
+        kill -0 "$LLAMA_PID" 2>/dev/null || { echo "vllm/run.sh: sidecar exited during startup" >&2; exit 1; }
+        state="$(curl -s -m 3 "http://127.0.0.1:$LLAMA_PORT/v1/models" | python3 -c '
+import json, sys
+s = [m["status"] for m in json.load(sys.stdin)["data"]]
+print("failed" if any(x.get("failed") for x in s) else
+      "ready" if s and all(x["value"] == "loaded" for x in s) else "wait")' 2>/dev/null || echo wait)"
+        [ "$state" = ready ] && break
+        [ "$state" = failed ] && { echo "vllm/run.sh: a sidecar model failed to load" >&2; exit 1; }
+        sleep 2
+    done
+    [ "$state" = ready ] || { echo "vllm/run.sh: sidecar not loaded after 240 s" >&2; exit 1; }
+    echo "vllm: sidecar ready"
+fi
 
 echo "vllm: $IMAGE, $MODEL_REPO as $SERVED_MODEL_NAME on :$PORT (KV=$KV_CACHE_MEMORY_BYTES B/card, MAX_MODEL_LEN=$MAX_MODEL_LEN, MAX_NUM_SEQS=$MAX_NUM_SEQS, SPEC=$SPEC/${MTP_TOKENS:-3}, KV scales=${FP8_KV_SCALES:-default})"
 "${COMPOSE[@]}" up --no-log-prefix &

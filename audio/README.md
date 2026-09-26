@@ -7,13 +7,16 @@ fronted by one proxy so clients only need one connection.
 
 | Component | What | Port |
 | --- | --- | --- |
-| `asr_transcode_proxy.py` + `asr-transcode-proxy.sh` + `cicero-asr-proxy.service` | The proxy: routes chat/ASR to the router, everything else `/v1/audio/*` to `tts-server` | 8079 |
+| `asr_transcode_proxy.py` + `asr-transcode-proxy.sh` + `cicero-asr-proxy.service` | The proxy: routes ASR to the llama.cpp sidecar (`ASR_PROXY_UPSTREAM`, :8081), everything else `/v1/audio/*` to `tts-server` | 8079 |
 | `qwentts.cpp/` (cloned by `install.sh`, gitignored) + `tts-server.sh` + `cicero-tts-server.service` | TTS backend (Qwen3-TTS CustomVoice, Vulkan) | 8078 |
 | `install.sh` | Clones/builds qwentts.cpp, downloads its models, installs both systemd units | — |
 
-The router (`gpu-0-1/`, port 8080) serves chat and `qwen3-asr` transcription
-directly; `tts-server` only speaks natively to `qwentts.cpp`'s own dialect,
-which is why the proxy exists.
+The proxy is for audio only. Chat goes straight to vLLM on :8080. In
+production, `qwen3-asr` runs in the llama.cpp sidecar on :8081
+(`vllm/sidecar.ini`), which is the proxy's `ASR_PROXY_UPSTREAM`. `tts-server`
+only speaks `qwentts.cpp`'s own dialect, which is why the proxy exists. TTS is
+stopped while `cicero-vllm.service` runs (VRAM), so `/v1/audio/speech` fails
+in that mode.
 
 ## Why the proxy exists
 

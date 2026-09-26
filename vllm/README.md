@@ -1,8 +1,8 @@
 # vLLM: Qwen3.8-27B FP8 on both R9700s
 
-An alternative to the llama.cpp stack for when this machine serves **only
-Qwen3.8-27B**. It uses the same API port and model id as the router, so clients
-do not change. Measurements and experiment history are in
+The production stack: **Qwen3.8-27B** on vLLM, plus a small llama.cpp sidecar
+for the two models vLLM cannot serve (ASR and Hindsight's reranker). vLLM uses
+the same API port and model id as the old router, so chat clients do not change. Measurements and experiment history are in
 [`TUNING-PLAN.md`](TUNING-PLAN.md).
 
 ## Final configuration
@@ -14,11 +14,12 @@ do not change. Measurements and experiment history are in
 | GPUs | Both R9700s, tensor-parallel 2 |
 | Speculative decoding | MTP, up to 3 draft tokens; the fork's controller sets the draft depth per request, per step |
 | KV cache | FP8 with calibrated per-layer scales (EN + RU + code corpus) |
-| Context | 262,144 tokens per request (the native limit), drawn from a shared pool of 758,606 tokens (13.44 GiB per card) |
+| Context | 262,144 tokens per request (the native limit), drawn from a shared pool of 606,299 tokens (10.75 GiB per card; 758,606 / 13.44 GiB without the sidecar) |
 | Concurrency | 16 sequences; prefill in 4096-token chunks |
-| VRAM | 30.54 of 31.86 GiB per card, and the same peak under a 4 × 187K-token stress test (1.32 GiB free) |
-| API | `http://cicero.local:8080/v1`, model `qwen3.8-27b`; Open WebUI on `:3000` |
-| Service | `cicero-vllm.service`, which conflicts with `cicero-home-ai.service` and `cicero-tts-server.service` |
+| VRAM | vLLM alone: 30.54 of 31.86 GiB per card, and the same peak under a 4 × 187K-token stress test (1.32 GiB free). With the sidecar: 30.35 / 30.66 GiB on ROCm0 / ROCm1, same peak under that stress test with ASR and rerank traffic running (1.51 / 1.20 GiB free, 0 preemptions) |
+| Sidecar | llama.cpp router, [`sidecar.ini`](sidecar.ini): `qwen3-asr` text model on ROCm0; its audio encoder and `qwen3-reranker` on ROCm1 |
+| API | `http://cicero.local:8080/v1`, model `qwen3.8-27b`; llama.cpp on `:8081`; audio proxy on `:8079`; Open WebUI on `:3000` |
+| Service | `cicero-vllm.service` (Open WebUI + sidecar + vLLM), which conflicts with `cicero-home-ai.service` and `cicero-tts-server.service` |
 
 Performance, measured 2026-09-26 on ROCm 10 with [`bench-openai.py`](bench-openai.py)
 at Qwen's recommended sampling:
@@ -32,13 +33,17 @@ at Qwen's recommended sampling:
 | That prompt's time to first token | 7.6 s | 32.5 s |
 | Tool calls well-formed | 30/30 | 15/15 |
 
-**Not available in this mode:**
-- ASR (`qwen3-asr`): voice transcription.
-- Hindsight's Recall reranker (`qwen3-reranker`): vLLM answers requests for it
-  with 404, so point it elsewhere or disable reranking first.
-- TTS: its unit is stopped when vLLM starts.
+**Ports:**
+- `:8080` vLLM, `qwen3.8-27b`: Hindsight's LLM, Hermes, mem0 and Open WebUI,
+  unchanged.
+- `:8081` llama.cpp sidecar: `qwen3-reranker` for Hindsight Recall
+  (`HINDSIGHT_API_RERANKER_LITELLM_API_BASE` in
+  `~/.config/hindsight/hindsight-qwen3.8-27b.env`) and `qwen3-asr`.
+- `:8079` audio proxy (`audio/`): audio only, with transcription going to
+  `:8081` and TTS to `:8078`.
 
-Hindsight's LLM calls, Hermes, mem0 and Open WebUI keep working unchanged.
+**Not available in this mode:** TTS. Its unit is stopped when vLLM starts,
+because it would take VRAM from the KV pool.
 
 ## Install, switch, update
 
@@ -67,8 +72,9 @@ Hindsight's LLM calls, Hermes, mem0 and Open WebUI keep working unchanged.
 | `IMAGE` | `magiccodingman/vllm-radiance:1.0.387` | pinned fork build |
 | `MODEL_REPO` / `MODEL_DIR` | `Qwen/Qwen3.8-27B-FP8` → `models/Qwen3.8-27B-FP8` | also listed in `models/list.txt` |
 | `SERVED_MODEL_NAME` / `PORT` | `qwen3.8-27b` / `8080` | drop-in for the router |
-| `GPU_UTIL` | `0.95` | startup check only while the KV size is explicit |
-| `KV_CACHE_MEMORY_BYTES` | `14428405760` | 13.44 GiB/card; re-size after changing image, driver, `MTP_TOKENS` or `MAX_NUM_SEQS` |
+| `LLAMA_PRESET` / `LLAMA_PORT` | `vllm/sidecar.ini` / `8081` | llama.cpp sidecar, loaded before vLLM; empty preset = vLLM alone |
+| `GPU_UTIL` | `0.85` | startup check only while the KV size is explicit; must fit into what the sidecar leaves free (`0.95` without it) |
+| `KV_CACHE_MEMORY_BYTES` | `11542724608` | 10.75 GiB/card (`14428405760` without the sidecar); re-size after changing image, driver, `MTP_TOKENS`, `MAX_NUM_SEQS` or `sidecar.ini` |
 | `MAX_MODEL_LEN` | `262144` | per-request ceiling, not a reservation |
 | `MAX_NUM_SEQS` | `16` | concurrent requests |
 | `SPEC` / `MTP_TOKENS` | `mtp` / `3` | `SPEC=off` disables speculative decoding |
@@ -125,10 +131,17 @@ decode tok/s (1 request / aggregate at 8) unless stated.
 - The explicit `KV_CACHE_MEMORY_BYTES` replaces vLLM's conservative
   auto-sizing, and `MAX_MODEL_LEN` only caps a single request.
 - When the pool is full, new requests queue; they do not fail.
+- The sidecar is loaded first, and vLLM takes the same pool on both cards, so
+  the fuller card sets the size. `sidecar.ini` keeps the cards level (ASR's
+  audio encoder sits on ROCm1 via `mmproj-device`), at ~2.5 GiB each.
+- ASR's encoder buffers are allocated on the first transcription. Send one
+  request to each sidecar model before reading idle VRAM.
+- 10.75 GiB leaves 1.51 / 1.20 GiB free on ROCm0 / ROCm1.
 - After any change that affects graph memory (image, driver, `MTP_TOKENS`,
-  `MAX_NUM_SEQS`, batch size), re-size it:
+  `MAX_NUM_SEQS`, batch size) or `sidecar.ini`, re-size it:
   1. Start with the current size.
-  2. Read idle VRAM (`amd-smi monitor -v`) and adjust to ~1.3 GiB free per card.
+  2. Read idle VRAM (`amd-smi monitor -v`) and adjust to ~1.3 GiB free on the
+     fuller card.
   3. Run `./vllm/stress-context.py --long 4 --ctx 190000`.
 
 **FP8 KV calibration.** The scales are a checksummed sidecar bound to the
@@ -176,7 +189,8 @@ a cold server includes kernel compilation.
 | --- | --- |
 | `config.env` | all settings; the only file to edit |
 | `docker-compose.yml` | the vLLM container: server flags, environment, mounts |
-| `run.sh` / `cicero-vllm.service` | Open WebUI + `docker compose up` in the foreground / the systemd user unit |
+| `run.sh` / `cicero-vllm.service` | Open WebUI, the sidecar (waits until loaded), then `docker compose up`, all in the foreground / the systemd user unit |
+| `sidecar.ini` | llama.cpp preset for the sidecar: ASR + reranker |
 | `install.sh`, `install-service.sh`, `update.sh`, `download-model.sh` | install, unit sync, update, model download |
 | `start.sh` / `stop.sh` | switch to vLLM and wait for readiness / stop it |
 | `bench-openai.py`, `stress-context.py` | benchmark and KV-pool stress test |
