@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Runtime-agnostic OpenAI-API benchmark (vLLM or llama.cpp), client-side timing only.
 
-hindsight/benchmark/bench-streams.py reads llama.cpp's `timings` field, which vLLM
-does not return, and uses random filler that makes MTP acceptance meaningless. This
-times the stream itself, on real prompts, so both servers are measured the same way.
+Times the stream itself on real prompts, so both servers are measured the same way:
+vLLM returns no `timings` field, and random filler would distort MTP acceptance.
 
 decode    : real prompts (prose/code/json/reasoning), recommended Qwen sampling, concurrency 1/2/4/8
 prefill   : real-text prompts (llama.cpp sources) of ~4k/16k/64k target size, max_tokens=1,

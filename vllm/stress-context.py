@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fill the shared KV pool with long-context requests and record peak VRAM.
 
-Validates GPU_UTIL / MAX_MODEL_LEN / MAX_NUM_SEQS in config.env: fires --long
+Validates KV_CACHE_MEMORY_BYTES / MAX_MODEL_LEN / MAX_NUM_SEQS in config.env: fires --long
 requests of ~--ctx prompt tokens each (enough to exceed the pool, so vLLM must
 queue or preempt) plus --decode short streams, samples each card's VRAM from sysfs
 every 0.25 s, and reads vLLM's preemption counter. A pass means every request

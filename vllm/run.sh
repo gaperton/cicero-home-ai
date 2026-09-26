@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
-# vllm/run.sh — Open WebUI, the llama.cpp sidecar and the vLLM server across
-# both cards. Run by cicero-vllm.service. Foreground; exits if any child dies.
+# vllm/run.sh — Open WebUI, the llama.cpp sidecar and vLLM. Run by
+# cicero-vllm.service in the foreground; exits when any child dies.
 #
-# vLLM serves the OpenAI API on :$PORT (8080, where the llama.cpp router used to
-# be) as model $SERVED_MODEL_NAME. The sidecar router ($LLAMA_PRESET: ASR and
-# the reranker) serves :$LLAMA_PORT. Open WebUI listens on :3000 and points at
-# vLLM.
+# vLLM: :$PORT, model $SERVED_MODEL_NAME. Sidecar ($LLAMA_PRESET): :$LLAMA_PORT.
+# Open WebUI: :3000, pointed at vLLM.
 set -euo pipefail
 
 VLLM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(dirname "$VLLM_DIR")"
 cd "$REPO"
 
-# Groups are fixed when the systemd user manager starts. If the user joined
-# `docker` after that (Docker was installed later), this process lacks it until a
-# re-login or reboot; pick it up for this process tree instead.
+# The systemd user manager keeps the groups it started with. If the user was
+# added to `docker` since, take the group for this process tree via sg.
 if ! id -Gn | tr ' ' '\n' | grep -qx docker && id -Gn "$(id -un)" | tr ' ' '\n' | grep -qx docker \
         && [ -z "${VLLM_RUN_SG:-}" ]; then
     exec env VLLM_RUN_SG=1 sg docker -c "exec '$0'"
@@ -30,7 +27,7 @@ source "$VLLM_DIR/config.env"
 MODEL_PATH="$REPO/$MODEL_DIR"
 CACHE_PATH="$VLLM_DIR/cache"
 CALIB_PATH="$VLLM_DIR/calibration"
-# The sidecar and its .manifest.json are mounted at /calibration.
+# The scales file and its .manifest.json are mounted at /calibration.
 RADIANCE_FP8_KV_SCALES=""
 if [ -n "${FP8_KV_SCALES:-}" ]; then
     [ -f "$REPO/$FP8_KV_SCALES" ] || { echo "vllm/run.sh: missing FP8 KV scales $FP8_KV_SCALES" >&2; exit 1; }
