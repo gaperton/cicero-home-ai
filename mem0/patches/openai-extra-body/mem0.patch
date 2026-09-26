@@ -1,0 +1,52 @@
+diff --git a/server/cicero_llm.py b/server/cicero_llm.py
+new file mode 100644
+index 0000000..0f0e6e3
+--- /dev/null
++++ b/server/cicero_llm.py
+@@ -0,0 +1,33 @@
++"""cicero: an "openai" LLM that can send a fixed ``extra_body`` with every request.
++
++Mem0's OpenAI LLM has no extra_body setting. Its only config-level way to turn a
++llama.cpp model's thinking off (``is_reasoning_model`` + ``reasoning_effort:
++"none"``) also stops it sending temperature, top_p and max_tokens. This adds an
++``extra_body`` key to the "openai" provider's config instead, e.g.
++``{"chat_template_kwargs": {"enable_thinking": false}}``, and leaves the rest of
++the request untouched. Without ``extra_body`` it behaves exactly like upstream.
++"""
++
++from typing import Any, Dict, Optional
++
++from mem0.configs.llms.openai import OpenAIConfig
++from mem0.llms.openai import OpenAILLM
++from mem0.utils.factory import LlmFactory
++
++
++class OpenAIExtraBodyConfig(OpenAIConfig):
++    def __init__(self, *args, extra_body: Optional[Dict[str, Any]] = None, **kwargs):
++        super().__init__(*args, **kwargs)
++        self.extra_body = extra_body
++
++
++class OpenAIExtraBodyLLM(OpenAILLM):
++    def generate_response(self, messages, response_format=None, tools=None, tool_choice="auto", **kwargs):
++        if self.config.extra_body:
++            kwargs.setdefault("extra_body", self.config.extra_body)
++        return super().generate_response(messages, response_format, tools, tool_choice, **kwargs)
++
++
++# LlmConfig only accepts provider names from a hardcoded list, so replace "openai"
++# itself rather than adding a new provider.
++LlmFactory.register_provider("openai", "cicero_llm.OpenAIExtraBodyLLM", OpenAIExtraBodyConfig)
+diff --git a/server/main.py b/server/main.py
+index 20059fb..88ea4eb 100644
+--- a/server/main.py
++++ b/server/main.py
+@@ -40,6 +40,8 @@ from sqlalchemy import func, select
+ 
+ from mem0.exceptions import ValidationError as Mem0ValidationError
+ 
++import cicero_llm  # noqa: F401  cicero: "openai" LLM with extra_body; must precede initialize_state()
++
+ load_dotenv()
+ 
+ install_request_id_logging()

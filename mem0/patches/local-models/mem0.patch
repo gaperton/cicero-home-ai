@@ -1,0 +1,33 @@
+diff --git a/server/main.py b/server/main.py
+index 20059fb..a43202f 100644
+--- a/server/main.py
++++ b/server/main.py
+@@ -60,7 +60,7 @@ SKIPPED_REQUEST_LOG_PATHS = {"/api/health", "/docs", "/redoc", "/openapi.json"}
+ SKIPPED_REQUEST_LOG_PREFIXES = ("/requests",)
+ 
+ BUNDLED_LLM_PROVIDERS = ("openai", "anthropic", "gemini")
+-BUNDLED_EMBEDDER_PROVIDERS = ("openai", "gemini")
++BUNDLED_EMBEDDER_PROVIDERS = ("openai", "gemini", "huggingface")
+ 
+ 
+ def _warn_if_unconfigured() -> None:
+diff --git a/server/requirements.txt b/server/requirements.txt
+index 33a11c5..7e3351c 100644
+--- a/server/requirements.txt
++++ b/server/requirements.txt
+@@ -24,3 +24,15 @@ posthog>=3.0,<8.0
+ 
+ # Per-IP rate limiting on auth endpoints
+ slowapi>=0.1.9,<1.0
++
++# cicero: local embeddings, per docs/open-source/setup.mdx "Supported providers".
++# Versions match Hindsight's venv so both services run bge-m3 on the same stack;
++# the CPU index keeps PyTorch's CUDA wheels (several GB) out of the image.
++--extra-index-url https://download.pytorch.org/whl/cpu
++torch==2.14.0+cpu
++sentence-transformers==6.1.0
++transformers==5.15.1
++# cicero: mem0ai[nlp]. Without it BM25 keyword search skips lemmatization and
++# entity extraction returns nothing.
++spacy==3.8.16
++en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl

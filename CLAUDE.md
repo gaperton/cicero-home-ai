@@ -20,6 +20,7 @@ There is one GPU folder and one user unit: `gpu-0-1/cicero-home-ai.service` runs
 - `llama.cpp/` — cloned separately (gitignored), built binaries live here alongside source; the same build/binaries are reused by `benchmark/` (no separate checkout)
 - `benchmark/` — generic model and topology benchmarks against the shared `../llama.cpp/` build, not a standalone checkout
 - `hindsight/` — current deployment documentation, updater/UI service, prompts, and workload benchmarks. Historical measurements and rejected configurations live in `hindsight/experiments/`. `hindsight/benchmark/bench-mtp.sh` drives the recorded workload through `hindsight-load.py`; read the `mix, per 100 calls` row, not `tg t/s`. `bench-hindsight.py` measures the real Hindsight service instead.
+- `mem0/` — Mem0's self-hosted server, run with Mem0's own Docker Compose stack from a gitignored clone (`mem0/upstream/`) at a release tag. `install.sh` applies `mem0/patches/` (same rule as llama.cpp: a patch that stops applying is a hard failure) and a Compose override that points it at the host PostgreSQL and the router. See `mem0/README.md`.
 
 **Script flow:**
 - `gpu-0-1/run.sh` — starts Open WebUI on :3000 and the router on :8080, reading `gpu-0-1/active.ini` with `--models-max 3`. Open WebUI and Hindsight share the router, so the WebUI model list includes `llm` and `reranker`.

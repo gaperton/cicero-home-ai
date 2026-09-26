@@ -1,0 +1,56 @@
+# cicero overrides for Mem0's reference Compose stack (mem0/upstream/server/
+# docker-compose.yaml). install.sh symlinks this file next to it, where
+# `docker compose` merges it automatically, so the upstream file stays untouched.
+#
+# - Host PostgreSQL 18 (database mem0 + mem0_app) instead of the bundled pgvector
+#   container, and the llama.cpp router on 127.0.0.1:8080. Both listen only on
+#   localhost, so the API container uses the host network (the dashboard too).
+# - Host ports 8890 (API) and 3001 (dashboard): Hindsight owns 8888 and Open WebUI
+#   owns 3000, the two ports upstream publishes.
+
+services:
+  mem0:
+    network_mode: host
+    networks: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    restart: unless-stopped
+    # Upstream reinstalls the newest mem0ai from PyPI on every start and runs
+    # uvicorn with --reload; pin the library to the checked-out tag instead.
+    command: >
+      sh -c "rm -rf /app/packages && pip install -q --force-reinstall --no-deps mem0ai==${MEM0AI_VERSION:?set by install.sh}
+      && alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8890"
+    environment:
+      - DASHBOARD_URL=http://cicero.local:3001
+      - HF_HOME=/hf-cache
+      - HF_HUB_OFFLINE=1
+      # torch defaults to one thread per core (16), as does Hindsight's embedder.
+      - OMP_NUM_THREADS=8
+    volumes:
+      # Keep history.db and telemetry state outside the source clone.
+      - ${HOME}/.local/share/mem0/history:/app/history
+      # Hindsight's Hugging Face cache: the identical bge-m3 snapshot, read-only.
+      - ${HOME}/.local/share/hindsight/cache/huggingface:/hf-cache:ro
+    mem_limit: 6g
+
+  postgres:
+    # The bundled database stays defined but never starts.
+    profiles: [bundled-postgres]
+
+  # Host network too: ufw's INPUT policy is DROP, so a bridge-network container
+  # cannot reach the API on the host. On the host network both ports are also
+  # governed by ufw alike (Docker-published ports would bypass it).
+  mem0-dashboard:
+    network_mode: host
+    networks: !reset null
+    ports: !reset []
+    restart: unless-stopped
+    environment:
+      - PORT=3001
+      # Without it the login cookie is marked Secure (NODE_ENV=production), which
+      # browsers drop over plain http:// except on localhost: login loops back.
+      - DASHBOARD_URL=http://cicero.local:3001
+      - NEXT_PUBLIC_API_URL=http://cicero.local:8890
+      - API_INTERNAL_URL=http://127.0.0.1:8890
+    healthcheck:
+      test: !override ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/api/health"]

@@ -1,0 +1,26 @@
+{
+  "llm": {
+    "provider": "openai",
+    "config": {
+      "model": "qwen3.8-27b",
+      "openai_base_url": "http://127.0.0.1:8080/v1",
+      "temperature": 0.1,
+      "top_p": 0.95,
+      "max_tokens": 4096,
+      "extra_body": {"chat_template_kwargs": {"enable_thinking": false}}
+    }
+  },
+  "embedder": {
+    "provider": "huggingface",
+    "config": {
+      "model": "BAAI/bge-m3",
+      "embedding_dims": 1024,
+      "model_kwargs": {"device": "cpu"}
+    }
+  },
+  "vector_store": {
+    "config": {
+      "embedding_model_dims": 1024
+    }
+  }
+}
