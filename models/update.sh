@@ -9,6 +9,12 @@ export PATH="$HOME/.local/bin:$PATH"
 while IFS=$'\t' read -r folder repo file rename; do
     [[ -z "$folder" || "$folder" == \#* ]] && continue
     dest_dir="$SCRIPT_DIR/$folder"
+    # `*` as the filename downloads the whole repo (multi-file checkpoints such
+    # as safetensors shards + config/tokenizer for vLLM).
+    if [[ "$file" == "*" ]]; then
+        hf download "$repo" --local-dir "$dest_dir"
+        continue
+    fi
     hf download "$repo" "$file" --local-dir "$dest_dir"
 
     # Optional 4th column: local filename, for repo files that would otherwise

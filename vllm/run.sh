@@ -34,7 +34,7 @@ set +a
 
 case "$SPEC" in
     mtp)
-        export RADIANCE_SPECULATIVE_CONFIG='{"method":"mtp","num_speculative_tokens":8,"attention_backend":"R4D","disable_padded_drafter_batch":true}'
+        export RADIANCE_SPECULATIVE_CONFIG="{\"method\":\"mtp\",\"num_speculative_tokens\":${MTP_TOKENS:-3},\"attention_backend\":\"R4D\",\"disable_padded_drafter_batch\":true}"
         export RADIANCE_FAST_DRAFT=1 ;;
     off) ;;
     *) echo "vllm/run.sh: SPEC must be mtp or off, got '$SPEC'" >&2; exit 1 ;;
@@ -69,7 +69,7 @@ export OPENAI_API_BASE_URLS="http://127.0.0.1:$PORT/v1"
 open-webui serve --port 3000 &
 PIDS+=("$!")
 
-echo "vllm: $IMAGE, $MODEL_REPO as $SERVED_MODEL_NAME on :$PORT (KV=$KV_CACHE_MEMORY_BYTES B/card, MAX_MODEL_LEN=$MAX_MODEL_LEN, MAX_NUM_SEQS=$MAX_NUM_SEQS, SPEC=$SPEC, KV scales=${FP8_KV_SCALES:-default})"
+echo "vllm: $IMAGE, $MODEL_REPO as $SERVED_MODEL_NAME on :$PORT (KV=$KV_CACHE_MEMORY_BYTES B/card, MAX_MODEL_LEN=$MAX_MODEL_LEN, MAX_NUM_SEQS=$MAX_NUM_SEQS, SPEC=$SPEC/${MTP_TOKENS:-3}, KV scales=${FP8_KV_SCALES:-default})"
 "${COMPOSE[@]}" up --no-log-prefix &
 PIDS+=("$!")
 
