@@ -31,6 +31,19 @@ The host has one combined topology in `gpu-0-1/`. One systemd user unit, `cicero
 ./gpu-0-1/run.sh   # foreground: Open WebUI :3000 + router :8080
 ```
 
+## vLLM alternative (Qwen3.8-27B only)
+
+[`vllm/`](vllm/README.md) replaces this stack when the machine serves only
+Qwen3.8-27B. It runs the official FP8 checkpoint across both cards with
+vllm-radiance, on the same port and model id (`:8080`, `qwen3.8-27b`), plus Open
+WebUI. Its unit, `cicero-vllm.service`, conflicts with `cicero-home-ai.service`
+and the TTS server. ASR, the reranker and TTS are not available in that mode.
+
+```bash
+./vllm/install.sh   # image + model + unit
+./vllm/start.sh     # switch to vLLM;  ./start.sh switches back
+```
+
 ## Hindsight
 
 Hindsight is managed separately from the llama.cpp stack; the top-level
@@ -178,6 +191,10 @@ gpu-0-1/                    # the only GPU/service folder
   run.sh                    #   Open WebUI :3000 + llama-server :8080
   install-service.sh        #   install/update the unit; retire legacy units
   cicero-home-ai.service    #   the single systemd user unit
+vllm/                       # alternative stack: Qwen3.8-27B FP8 on vLLM (radiance), see vllm/README.md
+  config.env                #   all settings (image pin, model, GPU_UTIL, context, MTP)
+  run.sh                    #   Open WebUI :3000 + vLLM :8080; cicero-vllm.service
+  install.sh / update.sh    #   pull image, download model, install unit / refresh
 llama.cpp/                  # llama.cpp source + build (cloned by install.sh, gitignored)
 models/
   list.txt                  # tab-separated HuggingFace model manifest

@@ -7,3 +7,9 @@ __pycache__
 reports
 *.log
 mem0/upstream
+vllm/cache
+vllm/bench-results.jsonl
+vllm/sample-config
+models/Qwen3.8-27B-FP8
+build
+vllm/calibration/corpus

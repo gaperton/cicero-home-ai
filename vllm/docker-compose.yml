@@ -1,0 +1,96 @@
+# vllm/docker-compose.yml — Qwen3.8-27B FP8 on both R9700s (TP=2) via vllm-radiance.
+# Started in the foreground by run.sh under cicero-vllm.service; variables come
+# from config.env (exported by run.sh). No restart policy: systemd supervises.
+# Based on the fork's own compose file, reduced to what this model uses.
+name: cicero-vllm
+
+services:
+  vllm:
+    image: ${IMAGE}
+    container_name: cicero-vllm
+    command:
+      - /models/model
+      - --served-model-name=${SERVED_MODEL_NAME}
+      - --tensor-parallel-size=2
+      - --max-model-len=${MAX_MODEL_LEN}
+      - --max-num-seqs=${MAX_NUM_SEQS}
+      - --gpu-memory-utilization=${GPU_UTIL}
+      # Inside the R4D exact TP2 all-reduce payload ceiling (RADIANCE_AR_MAX_KB
+      # below must cover max_num_batched_tokens x 5120 x 2 bytes, or large
+      # prefill messages silently fall back to RCCL).
+      - --max-num-batched-tokens=4096
+      # Explicit KV pool per card (config.env); skips vLLM's over-cautious
+      # activation reserve. Validated with stress-context.py.
+      - --kv-cache-memory-bytes=${KV_CACHE_MEMORY_BYTES}
+      # FP8 KV is mandatory in the fork's qualified profile (e4m3). The checkpoint
+      # has no KV scales; calibrated ones come from RADIANCE_FP8_KV_SCALES below.
+      - --kv-cache-dtype=fp8
+      - --attention-backend=R4D
+      # Hybrid model: both flags are needed or vLLM silently disables prefix
+      # caching; align also restores GDN state at block boundaries.
+      - --enable-prefix-caching
+      - --mamba-cache-mode=align
+      # Text only, as under llama.cpp (no mmproj): skips the vision encoder.
+      - --language-model-only
+      # MTP's disable_padded_drafter_batch is incompatible with async scheduling.
+      - --no-async-scheduling
+      - --enable-auto-tool-choice
+      - --tool-call-parser=qwen3_coder
+      - --reasoning-parser=qwen3
+      # Checkpoint sampling defaults; request parameters still win.
+      - --generation-config=auto
+      - --host=0.0.0.0
+      - --port=8000
+    environment:
+      HIP_VISIBLE_DEVICES: "0,1"
+      # Checkpoint weight format, appended as --quantization by the entrypoint.
+      RADIANCE_WEIGHT_QUANTIZATION: fp8
+      # Set by run.sh from SPEC; empty = no speculative decoding.
+      RADIANCE_SPECULATIVE_CONFIG: ${RADIANCE_SPECULATIVE_CONFIG:-}
+      RADIANCE_FAST_DRAFT: ${RADIANCE_FAST_DRAFT:-0}
+      RADIANCE_AR_MAX_KB: "49152"
+      # Calibrated per-layer q/k/v/prob scales (checksum- and checkpoint-verified
+      # sidecar); empty = default scales. Set by run.sh from FP8_KV_SCALES.
+      RADIANCE_FP8_KV_SCALES: ${RADIANCE_FP8_KV_SCALES:-}
+      RADIANCE_FP8_KV_SCALES_VERIFY: "1"
+      RADIANCE_AR_QUANT_MIN_KB: "128"
+      # AITER: unified attention only. Its other paths crash or hang on gfx1201.
+      VLLM_ROCM_USE_AITER: "1"
+      VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION: "1"
+      VLLM_ROCM_USE_AITER_MHA: "0"
+      VLLM_ROCM_USE_AITER_MLA: "0"
+      VLLM_ROCM_USE_AITER_MOE: "0"
+      VLLM_ROCM_USE_AITER_LINEAR: "0"
+      VLLM_ROCM_USE_AITER_FP8BMM: "0"
+      VLLM_ROCM_USE_AITER_FP4BMM: "0"
+      VLLM_ROCM_USE_AITER_RMSNORM: "0"
+      HIP_FORCE_DEV_KERNARG: "0"
+      TORCH_BLAS_PREFER_HIPBLASLT: "0"
+      # RCCL's LL protocol deadlocks on gfx12 (ROCm/rccl#2187). R4D handles the
+      # per-layer all-reduce; this covers whatever still goes through RCCL.
+      NCCL_PROTO: Simple
+      TORCHINDUCTOR_COMPILE_THREADS: "4"
+      # Persistent compile caches (vllm/cache): warm restarts skip minutes of
+      # Triton/Inductor compilation. update.sh clears them when the image changes.
+      VLLM_CACHE_ROOT: /cache/vllm
+      TORCHINDUCTOR_CACHE_DIR: /cache/inductor
+      TRITON_CACHE_DIR: /cache/triton
+      AITER_ROOT_DIR: /cache/aiter
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    security_opt:
+      - seccomp=unconfined
+    ipc: host
+    ports:
+      - "${PORT}:8000"
+    volumes:
+      - ${MODEL_PATH}:/models/model:ro
+      - ${CACHE_PATH}:/cache
+      - ${CALIB_PATH}:/calibration:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1800s

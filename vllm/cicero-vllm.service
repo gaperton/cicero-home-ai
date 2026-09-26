@@ -1,0 +1,24 @@
+[Unit]
+Description=Cicero Open WebUI and vLLM (Qwen3.8-27B FP8, ROCm0+ROCm1)
+After=network-online.target
+Wants=network-online.target
+# vLLM claims GPU_UTIL of both cards, so nothing else may hold VRAM: starting
+# this stops the llama.cpp stack and the Vulkan TTS server, and vice versa.
+Conflicts=cicero-home-ai.service cicero-tts-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gaperton/cicero-home-ai
+ExecStart=/home/gaperton/cicero-home-ai/vllm/run.sh
+# Backstop if run.sh is killed before its trap removes the container. sg: see
+# the group note at the top of run.sh.
+ExecStopPost=-/usr/bin/sg docker -c "docker rm -f cicero-vllm"
+Restart=always
+RestartSec=10
+TimeoutStopSec=120
+KillMode=mixed
+StandardOutput=append:/home/gaperton/cicero-home-ai/logs/vllm.log
+StandardError=append:/home/gaperton/cicero-home-ai/logs/vllm.log
+
+[Install]
+WantedBy=default.target
