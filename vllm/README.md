@@ -164,6 +164,11 @@ tok/s next to several 190K-token prompts.
   `RADIANCE_VERIFY_HEAD`, `RADIANCE_TOPK_COMPOSITE` and
   `RADIANCE_DYNAMIC_DRAFT`, all on by default. No client here uses
   `prompt_logprobs`; set the three to `0` for perplexity evaluation.
+- **The image's HSA profiler hook makes ROCr spin while idle.** Without
+  `HSA_TOOLS_DISABLE_REGISTER=1` each worker keeps two threads at 100% CPU
+  (`AsyncEventsLoop`, `InterruptSignal::WaitRelaxed`), which holds the CPU at
+  ~78 °C instead of ~33 °C. With it, idle threads stay under 1% and decode is
+  unchanged (84–85 tok/s, 1 request). Upstream: vllm-radiance issue #6.
 - **FP8 KV fidelity** was measured without repeat runs (no noise floor).
 - **Docker group:** the systemd user manager can predate the user joining
   `docker`. `run.sh` then re-executes itself under `sg docker`.

@@ -63,6 +63,9 @@ services:
       VLLM_ROCM_USE_AITER_FP4BMM: "0"
       VLLM_ROCM_USE_AITER_RMSNORM: "0"
       HIP_FORCE_DEV_KERNARG: "0"
+      # Without it the HSA profiler hook leaves ROCr polling: ~2 cores per
+      # worker spin at 100% while idle (magiccodingman/vllm-radiance#6).
+      HSA_TOOLS_DISABLE_REGISTER: "1"
       TORCH_BLAS_PREFER_HIPBLASLT: "0"
       # RCCL's LL protocol deadlocks on gfx12 (ROCm/rccl#2187). R4D handles the
       # per-layer all-reduce; this covers whatever still goes through RCCL.

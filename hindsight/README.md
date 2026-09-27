@@ -69,11 +69,17 @@ Restart the API after editing it.
 | `LLM_STRICT_SCHEMA` | `true` |
 | `RETAIN_` / `CONSOLIDATION_LLM_EXTRA_BODY` | `{"chat_template_kwargs":{"enable_thinking":false}}` |
 | `CONSOLIDATION_LLM_BATCH_SIZE` | `1` |
+| `RETAIN_MISSION` | `Output format: respond with compact single-line JSON, no line breaks or indentation.` |
 | `EMBEDDINGS_PROVIDER` / `EMBEDDINGS_LOCAL_MODEL` | `local`, `BAAI/bge-m3`, CPU forced |
 | `RERANKER_PROVIDER` / `RERANKER_LITELLM_API_BASE` / `RERANKER_LITELLM_MODEL` | `litellm`, `http://127.0.0.1:8081/v1`, `qwen3-reranker` |
 | `RERANKER_MAX_CANDIDATES` / `RERANKER_LITELLM_MAX_TOKENS_PER_DOC` | `100`, `3072` |
 
-All names carry the `HINDSIGHT_API_` prefix. The reranker's own settings (one
+All names carry the `HINDSIGHT_API_` prefix.
+
+`RETAIN_MISSION` works around a vLLM structured-output bug: with a strict schema,
+pretty-printed JSON can loop on whitespace until `max_tokens`. Compact output
+avoids it. A bank with its own retain mission overrides this setting and needs
+the same sentence appended. The reranker's own settings (one
 slot, 4096-token context and batch) live in `vllm/sidecar.ini`.
 
 Changing the embedding model after memories exist requires re-embedding the
