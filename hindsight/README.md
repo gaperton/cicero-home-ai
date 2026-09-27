@@ -13,7 +13,7 @@ OpenRouter.
 | Control Plane (web UI) | `http://cicero.local:9999` | `hindsight-ui.service` | `@vectorize-io/hindsight-control-plane`, same version as the API |
 | Database | local socket, `127.0.0.1:5432` | host PostgreSQL 18 | database `hindsight` with `vector` and `pg_trgm`, role `gaperton`, peer authentication |
 | Retain / Consolidation LLM | `http://127.0.0.1:8080/v1` | `cicero-vllm.service` | Qwen3.8-27B FP8 on vLLM, model id `qwen3.8-27b` |
-| Reflect LLM | `https://openrouter.ai/api/v1` | OpenRouter | `deepseek/deepseek-v4.1-flash`, reasoning effort `max` |
+| Reflect LLM | `https://openrouter.ai/api/v1` | OpenRouter | `z-ai/glm-5.3-flash`, reasoning effort `max` |
 | Reranker | `http://127.0.0.1:8081/v1` | llama.cpp sidecar in `cicero-vllm.service` | Qwen3-Reranker 0.6B Q8_0 on ROCm1, model id `qwen3-reranker` |
 | Embeddings | in-process | `hindsight.service` | `BAAI/bge-m3` on CPU, 1024 dimensions |
 
@@ -28,7 +28,7 @@ OpenRouter.
           +--> PostgreSQL (local socket)             memories, vectors, llm_requests
           +--> bge-m3 on CPU (in-process)            embeddings
           +--> vLLM :8080  qwen3.8-27b               Retain, Consolidation
-          +--> OpenRouter  deepseek-v4.1-flash       Reflect, mental-model refresh
+          +--> OpenRouter  glm-5.3-flash             Reflect, mental-model refresh
           +--> llama.cpp :8081  qwen3-reranker       Recall reranking
 ```
 
@@ -39,7 +39,7 @@ OpenRouter.
   PostgreSQL, and reranks them in one `/v1/rerank` request to the sidecar.
   Documents are truncated to 3072 tokens so each query+document pair fits the
   reranker's 4096-token batch; one oversized pair fails the whole request.
-- **Reflect** runs its agent loop on DeepSeek V4.1 Flash through OpenRouter,
+- **Reflect** runs its agent loop on GLM 5.3 Flash through OpenRouter,
   with reasoning effort `max`. Mental-model refresh runs the Reflect pipeline
   with the same model and effort. The prompts sent there include retrieved
   memories, so this data leaves the host.
@@ -58,7 +58,7 @@ Restart the API after editing it.
 | Setting | Value |
 | --- | --- |
 | `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODEL` | `openai`, `http://127.0.0.1:8080/v1`, `qwen3.8-27b` |
-| `REFLECT_LLM_PROVIDER` / `REFLECT_LLM_BASE_URL` / `REFLECT_LLM_MODEL` | `openai`, `https://openrouter.ai/api/v1`, `deepseek/deepseek-v4.1-flash` |
+| `REFLECT_LLM_PROVIDER` / `REFLECT_LLM_BASE_URL` / `REFLECT_LLM_MODEL` | `openai`, `https://openrouter.ai/api/v1`, `z-ai/glm-5.3-flash` |
 | `REFLECT_LLM_API_KEY` | OpenRouter key |
 | `REFLECT_LLM_REASONING_EFFORT` / `MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT` | `max` each |
 | `LLM_MAX_CONCURRENT` | `4` |

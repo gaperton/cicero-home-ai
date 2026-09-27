@@ -10,13 +10,13 @@ the same API port and model id as the old router, so chat clients do not change.
 | | |
 | --- | --- |
 | Runtime | [vllm-radiance](https://github.com/magiccodingman/vllm-radiance) `1.0.387`: vLLM 0.30 with hand-written gfx1201 kernels, including a P2P all-reduce between the cards |
-| Model | Official `Qwen/Qwen3.8-27B-FP8` (block FP8, built-in MTP head), text only |
+| Model | Official `Qwen/Qwen3.8-27B-FP8` (block FP8, built-in MTP head); text and image input (up to 8.39 MP, so a 4K screenshot stays at native resolution; no video) |
 | GPUs | Both R9700s, tensor-parallel 2 |
 | Speculative decoding | MTP, up to 3 draft tokens; the fork's controller sets the draft depth per request, per step |
 | KV cache | FP8 with calibrated per-layer scales (EN + RU + code corpus) |
-| Context | 262,144 tokens per request (the native limit), drawn from a shared pool of 606,299 tokens (10.75 GiB per card; 758,606 / 13.44 GiB without the sidecar) |
+| Context | 262,144 tokens per request (the native limit), drawn from a shared pool of 571,151 tokens (10.125 GiB per card; 13.44 GiB without the sidecar, measured before the vision encoder was loaded) |
 | Concurrency | 16 sequences; prefill in 4096-token chunks |
-| VRAM | vLLM alone: 30.54 of 31.86 GiB per card, and the same peak under a 4 × 187K-token stress test (1.32 GiB free). With the sidecar: 30.35 / 30.66 GiB on ROCm0 / ROCm1, same peak under that stress test with ASR and rerank traffic running (1.51 / 1.20 GiB free, 0 preemptions) |
+| VRAM | vLLM alone: 30.54 of 31.86 GiB per card, and the same peak under a 4 × 187K-token stress test (1.32 GiB free). With the sidecar and the vision encoder: 30.31 / 30.62 GiB on ROCm0 / ROCm1, same peak under that stress test with ASR and concurrent 4K-screenshot traffic running (1.55 / 1.24 GiB free, 0 preemptions) |
 | Sidecar | llama.cpp router, [`sidecar.ini`](sidecar.ini): `qwen3-asr` text model on ROCm0; its audio encoder and `qwen3-reranker` on ROCm1 |
 | API | `http://cicero.local:8080/v1`, model `qwen3.8-27b`; llama.cpp on `:8081`; audio proxy on `:8079`; Open WebUI on `:3000` |
 | Service | `cicero-vllm.service` (Open WebUI + sidecar + vLLM), which conflicts with `cicero-home-ai.service` and `cicero-tts-server.service` |
@@ -74,7 +74,7 @@ because it would take VRAM from the KV pool.
 | `SERVED_MODEL_NAME` / `PORT` | `qwen3.8-27b` / `8080` | drop-in for the router |
 | `LLAMA_PRESET` / `LLAMA_PORT` | `vllm/sidecar.ini` / `8081` | llama.cpp sidecar, loaded before vLLM; empty preset = vLLM alone |
 | `GPU_UTIL` | `0.85` | startup check only while the KV size is explicit; must fit into what the sidecar leaves free (`0.95` without it) |
-| `KV_CACHE_MEMORY_BYTES` | `11542724608` | 10.75 GiB/card (`14428405760` without the sidecar); re-size after changing image, driver, `MTP_TOKENS`, `MAX_NUM_SEQS` or `sidecar.ini` |
+| `KV_CACHE_MEMORY_BYTES` | `10871635968` | 10.125 GiB/card (`14428405760` without the sidecar, measured text-only); re-size after changing image, driver, `MTP_TOKENS`, `MAX_NUM_SEQS` or `sidecar.ini` |
 | `MAX_MODEL_LEN` | `262144` | per-request ceiling, not a reservation |
 | `MAX_NUM_SEQS` | `16` | concurrent requests |
 | `SPEC` / `MTP_TOKENS` | `mtp` / `3` | `SPEC=off` disables speculative decoding |
@@ -84,7 +84,7 @@ The fixed server flags are in [`docker-compose.yml`](docker-compose.yml), each
 with a one-line reason:
 - FP8 KV cache and R4D attention
 - prefix caching with `--mamba-cache-mode align`
-- `--language-model-only`
+- image input up to 8.39 MP (8192 tokens; 3840×2160 fits unscaled), no video
 - the `qwen3_coder` / `qwen3` tool and reasoning parsers
 
 ## Considered and excluded
@@ -136,7 +136,11 @@ decode tok/s (1 request / aggregate at 8) unless stated.
   audio encoder sits on ROCm1 via `mmproj-device`), at ~2.5 GiB each.
 - ASR's encoder buffers are allocated on the first transcription. Send one
   request to each sidecar model before reading idle VRAM.
-- 10.75 GiB leaves 1.51 / 1.20 GiB free on ROCm0 / ROCm1.
+- 10.125 GiB leaves 1.55 / 1.24 GiB free on ROCm0 / ROCm1.
+- The vision encoder costs 0.625 GiB per card of pool (606K → 571K tokens),
+  sized by its image cap: 0.5 GiB at 4.19 MP. An image at the cap adds no
+  VRAM after startup, because the encoder's peak is profiled then.
+  `--language-model-only` gets the 0.625 GiB back.
 - After any change that affects graph memory (image, driver, `MTP_TOKENS`,
   `MAX_NUM_SEQS`, batch size) or `sidecar.ini`, re-size it:
   1. Start with the current size.

@@ -28,8 +28,10 @@ services:
       # caching; align also restores GDN state at block boundaries.
       - --enable-prefix-caching
       - --mamba-cache-mode=align
-      # Text only: the vision encoder is not loaded.
-      - --language-model-only
+      # Image input, no video. 8.39 MP cap = 8192 tokens per image: a 4K
+      # screenshot at native resolution. The cap bounds the encoder's peak.
+      - '--limit-mm-per-prompt={"image":8,"video":0}'
+      - '--mm-processor-kwargs={"size":{"longest_edge":8388608,"shortest_edge":65536}}'
       # MTP's disable_padded_drafter_batch is incompatible with async scheduling.
       - --no-async-scheduling
       - --enable-auto-tool-choice
