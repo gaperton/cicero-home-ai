@@ -13,11 +13,6 @@ Gemma4-26B-A4B-QAT	unsloth/gemma-4-26B-A4B-it-qat-GGUF	gemma-4-26B-A4B-it-qat-UD
 Gemma4-26B-A4B-QAT	unsloth/gemma-4-26B-A4B-it-qat-GGUF	mtp-gemma-4-26B-A4B-it.gguf
 Qwen3.6-35B-A3B	unsloth/Qwen3.6-35B-A3B-MTP-GGUF	Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
 Qwen3-Reranker-0.6B	ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF	qwen3-reranker-0.6b-q8_0.gguf
-Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf
-Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00002-of-00003.gguf
-Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00003-of-00003.gguf
-Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf
-Qwen3.8-Flash-Next	unsloth/Qwen3.8-Flash-Next-GGUF	MTP/mtp-Qwen3.8-Flash-Next-shared-Q4_K_M.gguf
 Qwen3-ASR-1.7B	ggml-org/Qwen3-ASR-1.7B-GGUF	Qwen3-ASR-1.7B-Q8_0.gguf
 Qwen3-ASR-1.7B	ggml-org/Qwen3-ASR-1.7B-GGUF	mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
 Qwen3.8-27B-FP8	Qwen/Qwen3.8-27B-FP8	*
