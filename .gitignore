@@ -6,7 +6,6 @@ __pycache__
 .claude
 reports
 *.log
-mem0/upstream
 vllm/cache
 vllm/bench-results.jsonl
 vllm/sample-config

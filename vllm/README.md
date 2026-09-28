@@ -34,7 +34,7 @@ at Qwen's recommended sampling:
 | Tool calls well-formed | 30/30 | 15/15 |
 
 **Ports:**
-- `:8080` vLLM, `qwen3.8-27b`: Hindsight's LLM, Hermes, mem0 and Open WebUI,
+- `:8080` vLLM, `qwen3.8-27b`: Hindsight's LLM, Hermes and Open WebUI,
   unchanged.
 - `:8081` llama.cpp sidecar: `qwen3-reranker` for Hindsight Recall
   (`HINDSIGHT_API_RERANKER_LITELLM_API_BASE` in
