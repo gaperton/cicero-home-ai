@@ -1,0 +1,13 @@
+[Unit]
+Description=Cap the socket power (PPT0) of both AMD GPUs
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Accepted range 210-300 W. Re-run gpu-power/install.sh after changing it.
+Environment=GPU_POWER_CAP_W=250
+ExecStart=/usr/local/libexec/cicero-gpu-power.sh
+
+[Install]
+WantedBy=multi-user.target

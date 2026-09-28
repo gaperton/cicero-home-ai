@@ -24,6 +24,9 @@ if [[ ! -x /opt/rocm/llvm/bin/clang++ ]]; then
 fi
 echo "install.sh: ROCm found, GPU arch(s): $(/opt/rocm/llvm/bin/amdgpu-arch | sort -u | tr '\n' ' ')"
 
+# Cap both GPUs' power at boot (system unit; amd-smi comes with ROCm).
+"$SCRIPT_DIR/gpu-power/install.sh"
+
 # Clone the llama.cpp checkout, built with the ROCm/HIP backend (see .env).
 if [[ -d "$LLAMA_DIR/.git" ]]; then
     echo "llama.cpp checkout already exists at $LLAMA_DIR; skipping clone."

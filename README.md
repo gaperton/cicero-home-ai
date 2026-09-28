@@ -12,7 +12,8 @@ The host has one combined topology in `gpu-0-1/`. One systemd user unit, `cicero
 
 | Script | What it does |
 |---|---|
-| `install.sh` | Install deps, clone the llama.cpp checkout, install Python tools, install and enable the systemd user service. Run once with `sudo`. |
+| `install.sh` | Install deps, clone the llama.cpp checkout, install Python tools, install and enable the systemd user service and the GPU power cap. Run once with `sudo`. |
+| `gpu-power/install.sh` | Install `cicero-gpu-power.service`, a system unit that caps both GPUs at 250 W on every boot, and apply the cap now. Run with `sudo`. |
 | `update.sh` | Sync the user unit, stop the service, rebuild, update models, and restart. |
 | `hindsight/update.sh` | Back up PostgreSQL, upgrade Hindsight and its matching Control Plane, then verify both services. |
 | `start.sh` | Start the service via `systemctl --user`. |
@@ -191,6 +192,10 @@ gpu-0-1/                    # the only GPU/service folder
   run.sh                    #   Open WebUI :3000 + llama-server :8080
   install-service.sh        #   install/update the unit; retire legacy units
   cicero-home-ai.service    #   the single systemd user unit
+gpu-power/                  # boot-time GPU power cap (system unit, root)
+  cicero-gpu-power.service  #   oneshot; GPU_POWER_CAP_W=250 (range 210-300)
+  set-power-cap.sh          #   amd-smi set on every GPU, then verify the limit
+  install.sh                #   install unit + root-owned script copy, apply now
 vllm/                       # alternative stack: Qwen3.8-27B FP8 on vLLM (radiance), see vllm/README.md
   config.env                #   all settings (image pin, model, GPU_UTIL, context, MTP)
   run.sh                    #   Open WebUI :3000 + vLLM :8080; cicero-vllm.service
