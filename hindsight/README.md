@@ -43,6 +43,14 @@ OpenRouter.
   with reasoning effort `max`. Mental-model refresh runs the Reflect pipeline
   with the same model and effort. The prompts sent there include retrieved
   memories, so this data leaves the host.
+- Reflect is pinned to Z.AI's own fp8 endpoint with no fallback. OpenRouter
+  otherwise spreads GLM across ~30 hosts, many fp4, and one returned `done`
+  calls whose `answer` carried raw GLM tool-call markup (`<tool_call>`,
+  `<arg_key>`), which Hindsight passes through verbatim. Z.AI accepts
+  `tool_choice: "required"` but not a named choice; Hindsight only sends
+  `required`. DeepSeek V4.1 Flash is not a drop-in alternative: its own
+  endpoint is excluded by the account's no-training data policy, leaving only
+  third-party hosts.
 
 The vLLM stack is shared with Open WebUI and other clients. Hindsight is limited
 to 4 concurrent LLM calls overall and 3 per operation; each call must acquire
@@ -61,6 +69,7 @@ Restart the API after editing it.
 | `REFLECT_LLM_PROVIDER` / `REFLECT_LLM_BASE_URL` / `REFLECT_LLM_MODEL` | `openai`, `https://openrouter.ai/api/v1`, `z-ai/glm-5.3-flash` |
 | `REFLECT_LLM_API_KEY` | OpenRouter key |
 | `REFLECT_LLM_REASONING_EFFORT` / `MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT` | `max` each |
+| `REFLECT_LLM_EXTRA_BODY` | `{"provider":{"only":["z-ai"],"allow_fallbacks":false}}`; refresh inherits it |
 | `LLM_MAX_CONCURRENT` | `4` |
 | `RETAIN_` / `REFLECT_` / `CONSOLIDATION_LLM_MAX_CONCURRENT` | `3` each |
 | `MENTAL_MODEL_REFRESH_CONCURRENCY` | `3` |

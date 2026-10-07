@@ -13,3 +13,6 @@ models/Qwen3.8-27B-FP8
 build
 vllm/calibration/corpus
 models/Qwen3.8-27B-DFlash2
+radiance
+rad/state
+models/rad

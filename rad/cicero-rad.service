@@ -1,0 +1,24 @@
+[Unit]
+Description=Cicero Open WebUI and radiance (Qwen3.8-Flash-Next), ROCm0+ROCm1
+After=network-online.target
+Wants=network-online.target
+# radiance takes nearly all VRAM on both cards and :8080, so this unit excludes
+# the vLLM stack, the llama.cpp stack and the TTS server.
+Conflicts=cicero-vllm.service cicero-home-ai.service cicero-tts-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gaperton/cicero-home-ai
+ExecStart=/home/gaperton/cicero-home-ai/rad/run.sh
+# Removes the container if run.sh was killed before its cleanup. sg: see the
+# docker group note in run.sh.
+ExecStopPost=-/usr/bin/sg docker -c "docker rm -f cicero-rad"
+Restart=always
+RestartSec=10
+TimeoutStopSec=120
+KillMode=mixed
+StandardOutput=append:/home/gaperton/cicero-home-ai/logs/rad.log
+StandardError=append:/home/gaperton/cicero-home-ai/logs/rad.log
+
+[Install]
+WantedBy=default.target
