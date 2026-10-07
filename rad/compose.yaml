@@ -1,5 +1,6 @@
 # rad/compose.yaml — Qwen3.8-Flash-Next on both R9700s (TP=2) via the radiance engine
-# (codeberg.org/StillDeadcode/radiance). Flags follow upstream deploy/compose/flashnext.yaml.
+# (codeberg.org/StillDeadcode/radiance). Flags follow upstream deploy/compose/flashnext.yaml,
+# except the context: the full trained 262144 (upstream example: 200000).
 # Started in the foreground by run.sh under cicero-rad.service; variables come from
 # config.env (exported by run.sh). No restart policy: systemd supervises. No API key.
 
@@ -37,7 +38,7 @@ services:
       --tp 2
       --tp-wire wht6
       --max-num-seqs 8
-      --max-model-len 200000
+      --max-model-len 262144
       --placement expert_tiered
       --host-pool-mib ${HOST_POOL_MIB}
       --gpu-headroom-mib 256
