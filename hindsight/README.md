@@ -33,7 +33,7 @@ and reranks on `seneca.local`.
 - **Retain** extracts facts with the local Qwen, with thinking disabled.
 - **Consolidation** merges facts into observations with the local Qwen, with
   thinking disabled, one fact per batch.
-- **Recall** embeds the query on CPU, gathers up to 100 candidates from
+- **Recall** embeds the query on CPU, gathers up to 150 candidates from
   PostgreSQL, and reranks them in one `/v1/rerank` request to `seneca`.
   Documents are truncated to 3072 tokens so each query+document pair fits the
   reranker's 4096-token batch; one oversized pair fails the whole request.
@@ -72,7 +72,7 @@ repository; keep them mode `600`. Restart the API after editing or switching.
 | `RETAIN_MISSION` | `Every fact object must end with "causal_relations" followed by "from_attachments": write "from_attachments": null when the content has no attachments.` |
 | `EMBEDDINGS_PROVIDER` / `EMBEDDINGS_LOCAL_MODEL` | `local`, `BAAI/bge-m3`, CPU forced |
 | `RERANKER_PROVIDER` / `RERANKER_LITELLM_API_BASE` / `RERANKER_LITELLM_MODEL` | `litellm`, `http://seneca.local:8080/v1`, `qwen3-reranker` |
-| `RERANKER_MAX_CANDIDATES` / `RERANKER_LITELLM_MAX_TOKENS_PER_DOC` | `100`, `3072` |
+| `RERANKER_MAX_CANDIDATES` / `RERANKER_LITELLM_MAX_TOKENS_PER_DOC` | `150`, `3072` |
 
 All names carry the `HINDSIGHT_API_` prefix.
 
