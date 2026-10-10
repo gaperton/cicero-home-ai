@@ -3,15 +3,6 @@ Qwen3.8-27B	unsloth/Qwen3.8-27B-GGUF	Qwen3.8-27B-UD-Q4_K_XL.gguf
 Qwen3.8-27B	unsloth/Qwen3.8-27B-GGUF	Qwen3.8-27B-UD-Q5_K_M.gguf
 Qwen3.8-27B	unsloth/Qwen3.8-27B-GGUF	Qwen3.8-27B-UD-Q6_K.gguf
 Qwen3.8-27B	unsloth/Qwen3.8-27B-GGUF	Qwen3.8-27B-UD-Q6_K_M.gguf
-Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-Q6_K.gguf
-Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-UD-Q5_K_XL.gguf
-Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	gemma-4-31B-it-UD-Q6_K_XL.gguf
-Gemma4-31B	unsloth/gemma-4-31B-it-GGUF	MTP/mtp-gemma-4-31B-it-Q8_0.gguf
-Gemma4-31B-QAT	unsloth/gemma-4-31B-it-qat-GGUF	gemma-4-31B-it-qat-UD-Q4_K_XL.gguf
-Gemma4-31B-QAT	unsloth/gemma-4-31B-it-qat-GGUF	MTP/mtp-gemma-4-31B-it-Q8_0.gguf
-Gemma4-26B-A4B-QAT	unsloth/gemma-4-26B-A4B-it-qat-GGUF	gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf
-Gemma4-26B-A4B-QAT	unsloth/gemma-4-26B-A4B-it-qat-GGUF	mtp-gemma-4-26B-A4B-it.gguf
-Qwen3.6-35B-A3B	unsloth/Qwen3.6-35B-A3B-MTP-GGUF	Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
 Qwen3-Reranker-0.6B	ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF	qwen3-reranker-0.6b-q8_0.gguf
 Qwen3-ASR-1.7B	ggml-org/Qwen3-ASR-1.7B-GGUF	Qwen3-ASR-1.7B-Q8_0.gguf
 Qwen3-ASR-1.7B	ggml-org/Qwen3-ASR-1.7B-GGUF	mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
