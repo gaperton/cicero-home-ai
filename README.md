@@ -24,21 +24,21 @@ With the `flashnext` profile, radiance serves the 114 GiB model container
 `qwen3.8-next-flash-fp8-iq4r-moe.rad` (4-bit experts, int8 trunk, MTP head,
 vision tower) tensor-parallel across both cards:
 
-- **VRAM** — both cards are filled to ~99%: ~4 GiB of fixed weights, ~18 GiB
-  of experts and ~7.6 GiB of KV cache per card. Nothing else GPU-bound can run
+- **VRAM** — both cards are filled to ~99%: ~3.6 GiB of fixed weights, ~18 GiB
+  of experts and ~8.2 GiB of KV cache per card. Nothing else GPU-bound can run
   next to it.
 - **Host RAM** — experts that do not fit VRAM stream from a pinned 12 GiB pool
-  per card, and the 47.7 GiB n-gram table sits in pinned RAM. Expect ~85 GB of
-  RAM in use while serving.
+  per card; the 47.7 GiB n-gram table and the token embedding sit in pinned RAM.
+  Expect ~85 GB of RAM in use while serving.
 - **Context and concurrency** — 262,144 tokens per request, 8 sequences at once,
-  FP8 KV cache. The pool holds ~3.7 full-length sessions; beyond that the
+  FP8 KV cache. The pool holds ~4.0 full-length sessions; beyond that the
   scheduler preempts.
 - **Speculative decoding** — the model's MTP head drafts 3 tokens per step.
 - **Prefix cache** — finished conversations' KV moves to host RAM (4 GiB) and
   then to disk (128 GiB in `rad/state/kvcache/`), so a returning conversation
   skips its prefill.
 
-Measured on 1.2.3 with `rad/bench-openai.py`:
+Full run on 1.2.3 with `rad/bench-openai.py` (2026-10-07):
 
 | | 1 stream | 2 | 4 | 8 |
 |---|---:|---:|---:|---:|
@@ -48,22 +48,30 @@ Measured on 1.2.3 with `rad/bench-openai.py`:
 Prefill runs at 3.6–4.2K tok/s (4K–56K-token prompts); 15 of 15 tool-call
 probes returned well-formed calls.
 
+A quick run on 1.4.0 (1 and 4 streams, one ~14K-token prefill) gave 143 and
+308 tok/s aggregate and 4.6K tok/s prefill, 15 of 15 tool calls. Against the
+same quick run on 1.2.3 on the same driver, that is +5% at 4 streams and +14%
+on prefill.
+
 ## Using the API
 
 Point any OpenAI-compatible client at `http://cicero.local:8080/v1`. No API key.
 
 - **Endpoints:** `/v1/chat/completions` and `/v1/completions`, streaming or not,
   with tool calls and image or video input (images are resized to at most
-  4.2 MP). There is no `/v1/responses`, no Anthropic `/v1/messages`, and no
-  `/v1/embeddings`.
+  4.2 MP). Since 1.3.0 the server also speaks OpenAI's `/v1/responses`,
+  Anthropic's `/v1/messages` and llama-server's `/completion`, `/infill` and
+  `/props`, with logprobs. `/v1/embeddings` is for embedding models only, so it
+  is not available here.
 - **Model id:** chat and completion requests are served whatever `model` they
   name, but `GET /v1/models/<id>` returns 404 for anything other than
   `qwen-local`, so a client that checks the model first needs that id. Both
-  profiles use this id, so it does not tell which model is loaded.
-- **Unknown parameters are refused, not ignored.** A field the server does not
-  implement returns HTTP 400. The common case is an OpenAI `reasoning` object;
-  send `reasoning_effort` instead, one of `none`, `minimal`, `low`, `medium`,
-  `xhigh` (`high` and `max` are refused).
+  profiles use this id; `GET /v1/models` shows which is loaded in `root` (the
+  `.rad` file) along with `max_model_len`.
+- **Unknown parameters are ignored silently** (since 1.4.0; earlier releases
+  refused them with HTTP 400), so a misspelled field has no effect and no
+  error. An OpenAI `reasoning` object is accepted. `reasoning_effort` takes
+  `none`, `minimal`, `low`, `medium` or `xhigh`; `high` and `max` are refused.
 - Thinking is on by default. Turn it off per request with
   `"chat_template_kwargs": {"enable_thinking": false}`.
 
@@ -71,7 +79,10 @@ Point any OpenAI-compatible client at `http://cicero.local:8080/v1`. No API key.
 
 1. Install Ubuntu or Linux Mint with the amdgpu driver and `amd-smi` (from
    AMD's ROCm repo, https://repo.radeon.com). The engine's ROCm userspace ships
-   inside the radiance image; the host needs no ROCm SDK.
+   inside the radiance image; the host needs no ROCm SDK, but its driver must
+   support the image's ROCm (10.1 since radiance 1.4.0: driver 31.50 or newer).
+   Turn on Resizable BAR (Above 4G Decoding) in the firmware setup; radiance
+   refuses to start without it.
 2. Clone this repo and `cd` into it.
 3. Run first-time setup. It installs Docker, adds you to the `docker` group,
    installs the `hf` CLI and Open WebUI with pipx, installs the GPU power cap,
@@ -99,7 +110,7 @@ Hindsight is installed separately; see [`hindsight/README.md`](hindsight/README.
 tail -f logs/rad.log          # engine + Open WebUI log
 systemctl --user status cicero-rad.service
 curl -fsS http://127.0.0.1:8080/v1/models
-./rad/bench-openai.py --label rad-1.2.3   # benchmark; results append to bench-results.jsonl
+./rad/bench-openai.py --label rad-1.4.0   # benchmark; results append to bench-results.jsonl
 ```
 
 Startup takes a few minutes: the engine loads the model and copies the n-gram
