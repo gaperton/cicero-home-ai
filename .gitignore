@@ -5,5 +5,5 @@ reports
 *.log
 bench-results.jsonl
 models
-radiance
 rad/state
+build

@@ -5,7 +5,7 @@ Times the stream itself on real prompts, so any server is measured the same way:
 not every engine returns a `timings` field, and random filler would distort MTP acceptance.
 
 decode    : real prompts (prose/code/json/reasoning), recommended Qwen sampling, concurrency 1/2/4/8
-prefill   : real-text prompts (radiance sources) of ~4k/16k/64k target size, max_tokens=1,
+prefill   : real-text prompts (Python stdlib sources) of ~4k/16k/64k target size, max_tokens=1,
             unique nonce prefix so the prefix cache never hits
 mixed     : one ~32k prefill fired while a decode stream is running (production shape)
 toolcall  : N tool-call requests, counts well-formed calls
@@ -27,11 +27,9 @@ PROMPTS = {
 }
 SAMPLING = {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0}
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 def corpus():
-    root = os.path.join(REPO, "radiance")  # the engine's source clone
-    files = sorted(glob.glob(f"{root}/core/*.cpp"))
+    root = os.path.dirname(os.__file__)  # the Python standard library: real code on every host
+    files = sorted(glob.glob(f"{root}/*.py"))
     return "\n".join(open(f, errors="replace").read() for f in files)
 
 CORPUS = None
