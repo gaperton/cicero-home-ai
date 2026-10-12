@@ -12,13 +12,14 @@ services:
     container_name: cicero-rad
     init: true
     network_mode: host
-    user: "1000:1000"
+    # IDs come from run.sh: the host's own user and its render/video groups.
+    user: "${RAD_UID}:${RAD_GID}"
     devices:
       - /dev/kfd
       - /dev/dri
     group_add:
-      - "991"   # render
-      - "44"    # video
+      - "${RENDER_GID}"
+      - "${VIDEO_GID}"
     # io_uring (n-gram table reads) and ROCm's NUMA calls are refused by the default profile.
     security_opt:
       - seccomp=unconfined

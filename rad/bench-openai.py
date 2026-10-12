@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Runtime-agnostic OpenAI-API benchmark (vLLM or llama.cpp), client-side timing only.
+"""Runtime-agnostic OpenAI-API benchmark, client-side timing only.
 
-Times the stream itself on real prompts, so both servers are measured the same way:
-vLLM returns no `timings` field, and random filler would distort MTP acceptance.
+Times the stream itself on real prompts, so any server is measured the same way:
+not every engine returns a `timings` field, and random filler would distort MTP acceptance.
 
 decode    : real prompts (prose/code/json/reasoning), recommended Qwen sampling, concurrency 1/2/4/8
-prefill   : real-text prompts (llama.cpp sources) of ~4k/16k/64k target size, max_tokens=1,
+prefill   : real-text prompts (radiance sources) of ~4k/16k/64k target size, max_tokens=1,
             unique nonce prefix so the prefix cache never hits
 mixed     : one ~32k prefill fired while a decode stream is running (production shape)
 toolcall  : N tool-call requests, counts well-formed calls
 
-  ./vllm/bench-openai.py --label vllm-mtp                        # against :8080
-  ./vllm/bench-openai.py --label x --base http://127.0.0.1:8000  # another server
+  ./rad/bench-openai.py --label rad                             # against :8080
+  ./rad/bench-openai.py --label x --base http://127.0.0.1:8000  # another server
 
 Results append to --out as JSON lines. The first prefill size includes any lazy
 kernel compilation on a cold server; re-run it before trusting that one number.
@@ -30,8 +30,8 @@ SAMPLING = {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "prese
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def corpus():
-    root = os.path.join(REPO, "llama.cpp")  # the stack's own llama.cpp checkout
-    files = sorted(glob.glob(f"{root}/src/*.cpp")) + sorted(glob.glob(f"{root}/tools/server/*.cpp"))
+    root = os.path.join(REPO, "radiance")  # the engine's source clone
+    files = sorted(glob.glob(f"{root}/core/*.cpp"))
     return "\n".join(open(f, errors="replace").read() for f in files)
 
 CORPUS = None

@@ -21,6 +21,11 @@ set -a
 source "$RAD_DIR/config.env"
 RADIANCE_MODELS="$REPO/$RADIANCE_MODELS"
 RADIANCE_STATE="$REPO/$RADIANCE_STATE"
+# For compose.yaml: run as this user, with the groups that open /dev/kfd and /dev/dri.
+RAD_UID="$(id -u)"
+RAD_GID="$(id -g)"
+RENDER_GID="$(getent group render | cut -d: -f3)"
+VIDEO_GID="$(getent group video | cut -d: -f3)"
 set +a
 
 [ -f "$RADIANCE_MODELS/$RADIANCE_MODEL" ] || { echo "rad/run.sh: no model at $RADIANCE_MODELS/$RADIANCE_MODEL" >&2; exit 1; }

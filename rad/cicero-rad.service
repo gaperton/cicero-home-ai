@@ -2,9 +2,6 @@
 Description=Cicero Open WebUI and radiance (Qwen3.8-Flash-Next), ROCm0+ROCm1
 After=network-online.target
 Wants=network-online.target
-# radiance takes nearly all VRAM on both cards and :8080, so this unit excludes
-# the vLLM stack, the llama.cpp stack and the TTS server.
-Conflicts=cicero-vllm.service cicero-home-ai.service cicero-tts-server.service
 
 [Service]
 Type=simple

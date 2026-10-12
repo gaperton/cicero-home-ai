@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# start.sh — Start the combined AI service.
+# start.sh — Start the radiance stack.
 set -euo pipefail
 
-systemctl --user start cicero-home-ai.service
-echo "Started. Status: ./switch"
+systemctl --user start cicero-rad.service
+echo "Started. Log: tail -f logs/rad.log"

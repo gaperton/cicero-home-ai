@@ -51,10 +51,9 @@ operation; each call must acquire both limits.
 ## Configuration
 
 `hindsight.service` loads `~/.config/hindsight/hindsight.env`, a symlink to
-the active profile `hindsight-qwen3.8-flash-next.env`.
-`hindsight-qwen3.8-27b.env` is the profile for the vLLM stack (`vllm/`), with
-the reranker on the local sidecar at `:8081`. Profiles are not tracked in this
-repository; keep them mode `600`. Restart the API after editing or switching.
+the active profile `hindsight-qwen3.8-flash-next.env`. Profiles are not tracked
+in this repository; keep them mode `600`. Restart the API after editing or
+switching.
 
 | Setting | Value |
 | --- | --- |
@@ -95,8 +94,8 @@ stored data and rebuilding its vector indexes.
 | --- | --- |
 | `hindsight/update.sh` | Back up PostgreSQL, upgrade the API and the matching Control Plane, and verify both |
 | `hindsight/ui/` | Control Plane installer and its systemd user unit |
-| `hindsight/benchmark/` | Workload generators and benchmarks |
-| `hindsight/templates/` | Reference copies of Hindsight's Retain and Consolidate prompts, used by the benchmarks |
+| `hindsight/benchmark/` | End-to-end benchmark of the Hindsight service, and the recorded workload shape |
+| `hindsight/experiments/` | Dated investigations and incidents, including the earlier llama.cpp and vLLM deployments |
 | `~/.local/share/hindsight/venv` | API Python environment |
 | `~/.local/share/hindsight/cache/huggingface` | Embedding-model cache |
 | `~/.local/share/hindsight-control-plane` | Control Plane npm install |

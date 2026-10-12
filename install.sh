@@ -4,43 +4,34 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LLAMA_DIR="$SCRIPT_DIR/llama.cpp"
 
-# Install system dependencies (tmux, mc, node, etc.) plus llama.cpp's host build deps.
-# The GPU backend is ROCm/HIP; its SDK is NOT in the Ubuntu archive and is not
-# installed here — see the ROCm check below.
+[[ $EUID -eq 0 && -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]] || {
+    echo "install.sh: run as your user with sudo: sudo ./install.sh" >&2; exit 1; }
+
+# radiance runs in Docker with its own ROCm userspace; the host needs only the
+# amdgpu kernel driver, plus amd-smi for the power cap.
 apt-get update
-apt-get install -y ripgrep ffmpeg pciutils pipx tmux mc nodejs npm \
-    build-essential cmake ccache curl libcurl4-openssl-dev
+apt-get install -y ripgrep pipx tmux mc curl openssl
+# Skipped when Docker with Compose v2 is already there, e.g. docker-ce from Docker's repo.
+docker compose version >/dev/null 2>&1 || apt-get install -y docker.io docker-compose-v2
 
-# llama.cpp is built with -DGGML_HIP=ON (see .env), so ROCm has to be installed
-# already, from AMD's own apt repo (https://repo.radeon.com) — the packages are
-# named amdrocm-*, not rocm-*, and the version moves independently of this repo.
-# Fail loudly rather than fall through to a build that dies in enable_language(HIP).
-if [[ ! -x /opt/rocm/llvm/bin/clang++ ]]; then
-    echo "install.sh: ROCm not found at /opt/rocm (need the HIP SDK, incl. rocblas/hipblas)." >&2
-    echo "  Install it from AMD's repo first, then re-run: https://rocm.docs.amd.com" >&2
+if ! command -v amd-smi >/dev/null; then
+    echo "install.sh: amd-smi not found (ships with ROCm, https://repo.radeon.com); needed for the GPU power cap." >&2
     exit 1
 fi
-echo "install.sh: ROCm found, GPU arch(s): $(/opt/rocm/llvm/bin/amdgpu-arch | sort -u | tr '\n' ' ')"
 
-# Cap both GPUs' power at boot (system unit; amd-smi comes with ROCm).
+# Cap both GPUs' power at boot.
 "$SCRIPT_DIR/gpu-power/install.sh"
 
-# Clone the llama.cpp checkout, built with the ROCm/HIP backend (see .env).
-if [[ -d "$LLAMA_DIR/.git" ]]; then
-    echo "llama.cpp checkout already exists at $LLAMA_DIR; skipping clone."
-else
-    sudo -u "$SUDO_USER" git clone https://github.com/ggml-org/llama.cpp "$LLAMA_DIR"
-fi
-
-sudo -u "$SUDO_USER" "$SCRIPT_DIR/models/install.sh"
+# rad/run.sh starts the container as the user; it takes the group via sg until the next login.
+usermod -aG docker "$SUDO_USER"
 
 SUDO_UID=$(id -u "$SUDO_USER")
 SUDO_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 
-# Install user-level tools. Open WebUI supports Python 3.11/3.12, while the host's
-# default Python may be newer, so provision and select a compatible interpreter.
+# User-level tools: the hf CLI for the model download, and Open WebUI, which
+# supports Python 3.11/3.12 while the host's default Python may be newer.
+sudo -u "$SUDO_USER" pipx install 'huggingface_hub[cli]'
 sudo -u "$SUDO_USER" pipx install uv
 UV_BIN="$SUDO_HOME/.local/bin/uv"
 sudo -u "$SUDO_USER" "$UV_BIN" python install 3.11
@@ -48,11 +39,8 @@ OPEN_WEBUI_PYTHON=$(sudo -u "$SUDO_USER" "$UV_BIN" python find 3.11)
 sudo -u "$SUDO_USER" pipx install --python "$OPEN_WEBUI_PYTHON" open-webui
 sudo -u "$SUDO_USER" pipx ensurepath
 
-# Create logs directory
-sudo -u "$SUDO_USER" mkdir -p "$SCRIPT_DIR/logs"
-
 # Install and enable the systemd user service.
 run_user() { sudo -u "$SUDO_USER" HOME="$SUDO_HOME" XDG_RUNTIME_DIR="/run/user/$SUDO_UID" "$@"; }
 loginctl enable-linger "$SUDO_USER"
-run_user "$SCRIPT_DIR/gpu-0-1/install-service.sh"
-echo "Systemd user service installed and enabled. Run ./update.sh to build and start."
+run_user "$SCRIPT_DIR/rad/install-service.sh"
+echo "Systemd user service installed and enabled. Run ./update.sh to pull the image, download the model and start."

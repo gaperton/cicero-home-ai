@@ -1,96 +1,136 @@
 # cicero-home-ai
 
-Home AI server running local LLMs via [llama.cpp](https://github.com/ggml-org/llama.cpp) in router mode. Exposes an OpenAI-compatible API, a chat UI ([Open WebUI](https://github.com/open-webui/open-webui) on port 3000), and the Hindsight Control Plane on port 9999.
+A home AI server on two AMD Radeon AI PRO R9700 cards (gfx1201, 32 GB each,
+121 GB host RAM). It runs one model, **Qwen3.8-Flash-Next**, on the
+[radiance](https://codeberg.org/StillDeadcode/radiance) inference engine.
+
+| Service | Address | Unit |
+|---|---|---|
+| OpenAI-compatible API | `http://cicero.local:8080/v1`, model `qwen3.8-flash-next` | `cicero-rad.service` |
+| Open WebUI (chat) | `http://cicero.local:3000` | `cicero-rad.service` |
+| Hindsight memory API / Control Plane | `:8888` / `:9999` | `hindsight.service`, `hindsight-ui.service` — see [`hindsight/`](hindsight/README.md) |
+| GPU power cap, 250 W per card | — | `cicero-gpu-power.service` (system) |
 
 ## How it works
 
-`llama-server` runs in **router mode** — a built-in multi-model proxy. It routes requests based on the requested model name, starting a model process when needed. `gpu-0-1/run.sh` sets `--models-max 3`; this startup-only option cannot live in the preset.
+`cicero-rad.service` (systemd user unit) runs `rad/run.sh`. That script starts
+Open WebUI and the radiance container (`docker compose`, `rad/compose.yaml`) in
+the foreground and exits as soon as either dies, so systemd restarts the
+whole stack. Both write to `logs/rad.log`.
 
-The host has one combined topology in `gpu-0-1/`. One systemd user unit, `cicero-home-ai.service`, supervises Open WebUI and the router together. The router owns both ROCm cards, serves all three resident models on port 8080, and uses per-model placement from `combined.ini`. Open WebUI listens on port 3000 and points at that router.
+radiance serves the 114 GiB model container
+`qwen3.8-next-flash-fp8-iq4r-moe.rad` (4-bit experts, int8 trunk, MTP head,
+vision tower) tensor-parallel across both cards:
 
-**Open WebUI** runs on port 3000 against the combined router on port 8080, which Hindsight and direct API clients also use. The raw llama.cpp API is reachable on the LAN as `http://cicero.local:8080/v1`.
+- **VRAM** — both cards are filled to ~99%: ~4 GiB of fixed weights, ~18 GiB
+  of experts and ~7.6 GiB of KV cache per card. Nothing else GPU-bound can run
+  next to it.
+- **Host RAM** — experts that do not fit VRAM stream from a pinned 12 GiB pool
+  per card, and the 47.7 GiB n-gram table sits in pinned RAM. Expect ~85 GB of
+  RAM in use while serving.
+- **Context and concurrency** — 262,144 tokens per request, 8 sequences at once,
+  FP8 KV cache. The pool holds ~3.7 full-length sessions; beyond that the
+  scheduler preempts.
+- **Speculative decoding** — the model's MTP head drafts 3 tokens per step.
+- **Prefix cache** — finished conversations' KV moves to host RAM (4 GiB) and
+  then to disk (128 GiB in `rad/state/kvcache/`), so a returning conversation
+  skips its prefill.
 
-| Script | What it does |
-|---|---|
-| `install.sh` | Install deps, clone the llama.cpp checkout, install Python tools, install and enable the systemd user service and the GPU power cap. Run once with `sudo`. |
-| `gpu-power/install.sh` | Install `cicero-gpu-power.service`, a system unit that caps both GPUs at 250 W on every boot, and apply the cap now. Run with `sudo`. |
-| `update.sh` | Sync the user unit, stop the service, rebuild, update models, and restart. |
-| `hindsight/update.sh` | Back up PostgreSQL, upgrade Hindsight and its matching Control Plane, then verify both services. |
-| `start.sh` | Start the service via `systemctl --user`. |
-| `stop.sh` | Stop the service via `systemctl --user`. |
-| `gpu-0-1/run.sh` | Start Open WebUI and the combined router in the foreground. Called by `cicero-home-ai.service`. |
-| `switch gpu-0-1 <preset>` | Point the router at a preset and restart it. No args = status. |
-| `benchmark/bench.sh` | Run `llama-bench` (single GPU, ROCm) and save a Markdown report under `benchmark/reports/`. |
-| `hindsight/benchmark/bench-mtp.sh` | Boot `llama-server` per model/quant and measure MTP speculative-decoding speedup on the Hindsight workload. |
+Measured on 1.2.3 with `rad/bench-openai.py`:
 
-## Usage
+| | 1 stream | 2 | 4 | 8 |
+|---|---:|---:|---:|---:|
+| decode, aggregate tok/s | 117 | 212 | 316 | 448 |
+| decode, per request tok/s | 121 | 109 | 91 | 64 |
 
-```bash
-./start.sh    # start the service
-./stop.sh     # stop the service
-./update.sh   # rebuild, update models, restart
-./gpu-0-1/run.sh   # foreground: Open WebUI :3000 + router :8080
-```
+Prefill runs at 3.6–4.2K tok/s (4K–56K-token prompts); 15 of 15 tool-call
+probes returned well-formed calls.
 
-## vLLM alternative (Qwen3.8-27B only)
+## Using the API
 
-[`vllm/`](vllm/README.md) replaces this stack when the machine serves only
-Qwen3.8-27B. It runs the official FP8 checkpoint across both cards with
-vllm-radiance, on the same port and model id (`:8080`, `qwen3.8-27b`), plus Open
-WebUI. Its unit, `cicero-vllm.service`, conflicts with `cicero-home-ai.service`
-and the TTS server. ASR, the reranker and TTS are not available in that mode.
+Point any OpenAI-compatible client at `http://cicero.local:8080/v1`. No API key.
 
-```bash
-./vllm/install.sh   # image + model + unit
-./vllm/start.sh     # switch to vLLM;  ./start.sh switches back
-```
-
-## Hindsight
-
-Hindsight is managed separately from the llama.cpp stack; the top-level
-`install.sh` does not install its API or Control Plane. For an existing Hindsight
-API installation, install the persistent Web UI and apply future upgrades with:
-
-```bash
-./hindsight/ui/install.sh
-./hindsight/update.sh           # latest matching API + Control Plane
-./hindsight/update.sh 0.9.1     # explicit version
-```
-
-See [`hindsight/README.md`](hindsight/README.md) for service configuration,
-access, verification, rollback, and benchmark details.
+- **Endpoints:** `/v1/chat/completions` and `/v1/completions`, streaming or not,
+  with tool calls and image or video input (images are resized to at most
+  4.2 MP). There is no `/v1/responses`, no Anthropic `/v1/messages`, and no
+  `/v1/embeddings`.
+- **Model id:** chat and completion requests are served whatever `model` they
+  name, but `GET /v1/models/<id>` returns 404 for anything other than
+  `qwen3.8-flash-next`, so a client that checks the model first needs that id.
+- **Unknown parameters are refused, not ignored.** A field the server does not
+  implement returns HTTP 400. The common case is an OpenAI `reasoning` object;
+  send `reasoning_effort` instead, one of `none`, `minimal`, `low`, `medium`,
+  `xhigh` (`high` and `max` are refused).
+- Thinking is on by default. Turn it off per request with
+  `"chat_template_kwargs": {"enable_thinking": false}`.
 
 ## Installation
 
-Configured for AMD GPUs using the **ROCm/HIP backend** (`-DGGML_HIP=ON`, `GPU_TARGETS=gfx1201`).
-The ROCm SDK must be installed first, from AMD's own apt repo — it is not in the Ubuntu archive,
-and `install.sh` checks for `/opt/rocm` and stops if it is missing rather than failing later in the build.
-
-1. Install Linux Mint Cinnamon (or Ubuntu; Mint/Ubuntu assumed below)
-2. Clone this repo and `cd` into it
-3. Run first-time setup (installs deps, clones llama.cpp, installs and enables the systemd user service):
+1. Install Ubuntu or Linux Mint with the amdgpu driver and `amd-smi` (from
+   AMD's ROCm repo, https://repo.radeon.com). The engine's ROCm userspace ships
+   inside the radiance image; the host needs no ROCm SDK.
+2. Clone this repo and `cd` into it.
+3. Run first-time setup. It installs Docker, adds you to the `docker` group,
+   installs the `hf` CLI and Open WebUI with pipx, installs the GPU power cap,
+   enables lingering, and installs and enables `cicero-rad.service`:
    ```bash
    sudo ./install.sh
    ```
-4. Reload your shell so `hf` is on PATH, then authenticate with HuggingFace:
+4. Reload your shell, then pull the image, download the model (~114 GiB into
+   `models/rad/`) and start the stack:
    ```bash
    source ~/.bashrc
-   hf auth login
-   ```
-5. Build llama.cpp, download all models listed in `models/list.txt`, and start the service:
-   ```bash
    ./update.sh
    ```
 
-The `cicero-home-ai.service` user unit runs `gpu-0-1/run.sh`. Build and server flags live in `.env`; see [Configuration](#configuration).
+Hindsight is installed separately; see [`hindsight/README.md`](hindsight/README.md).
 
-## Booting into TTY and auto-starting the server
+## Operation
 
-Running in TTY (no desktop) frees ~2–4 GB of VRAM needed for full context sizes. The systemd user service (installed by `install.sh`) starts the server automatically on boot with lingering enabled.
+```bash
+./start.sh                    # systemctl --user start cicero-rad.service
+./stop.sh                     # systemctl --user stop cicero-rad.service
+./update.sh                   # re-pull the pinned image, sync the unit, restart
+./update.sh 1.2.4             # move the pin to another radiance release, then the same
+tail -f logs/rad.log          # engine + Open WebUI log
+systemctl --user status cicero-rad.service
+curl -fsS http://127.0.0.1:8080/v1/models
+./rad/bench-openai.py --label rad-1.2.3   # benchmark; results append to bench-results.jsonl
+```
 
-**1. Add a custom GRUB entry**
+Startup takes a few minutes: the engine loads the model and copies the n-gram
+table into pinned RAM before `server: listening` appears in the log. Read the
+`placement:` and `VRAM budget` lines there to see where each part of the model
+landed.
 
-Copy the `linux` and `initrd` lines from your existing Mint entry in `/boot/grub/grub.cfg`, append `systemd.unit=multi-user.target` to the `linux` line, and save to `/etc/grub.d/40_custom`:
+radiance releases land several times a day, so the image tag is pinned in
+`rad/config.env` and changes only through `./update.sh <tag>`. Re-run
+`rad/bench-openai.py` after a bump and compare it with the table above. Stop
+other clients first: Open WebUI and Hindsight share `:8080`.
+
+## Configuration
+
+| File | Holds |
+|---|---|
+| `rad/config.env` | Image tag, model file and its Hugging Face repo, served model id, host/port, expert host pool per card |
+| `rad/compose.yaml` | Engine flags: TP, sequences, context, placement, KV dtype, prefix-cache tiers, speculative tokens. The parser takes `--flag value`, not `--flag=value` |
+| `rad/cicero-rad.service` | The user unit; `rad/install-service.sh` installs it (paths are rewritten to the repo's location) |
+| `gpu-power/cicero-gpu-power.service` | `GPU_POWER_CAP_W` (210–300). Re-run `sudo gpu-power/install.sh` after editing |
+
+`HOST_POOL_MIB` trades RAM for VRAM: experts the pool cannot hold take card
+memory away from the KV cache.
+
+`rad/state/kvcache/` holds conversation KV on disk, unencrypted.
+
+## Booting into TTY
+
+The model needs nearly all VRAM on both cards, so the machine boots without a
+desktop. `install.sh` enables lingering, so `cicero-rad.service` starts at
+boot without a login.
+
+**1. Add a GRUB entry.** Copy the `linux` and `initrd` lines from your existing
+entry in `/boot/grub/grub.cfg`, append `systemd.unit=multi-user.target` to the
+`linux` line, and save to `/etc/grub.d/40_custom`:
 
 ```bash
 menuentry "cicero-home-ai (TTY)" {
@@ -100,13 +140,9 @@ menuentry "cicero-home-ai (TTY)" {
 }
 ```
 
-Get your UUID with `lsblk -o NAME,UUID`, then regenerate GRUB:
+Get the UUID with `lsblk -o NAME,UUID`, then run `sudo update-grub`.
 
-```bash
-sudo update-grub
-```
-
-**2. Enable autologin on TTY1 (optional)**
+**2. Autologin on TTY1 (optional):**
 
 ```bash
 sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
@@ -117,107 +153,26 @@ ExecStart=-/sbin/agetty --autologin $USER --noclear %I \$TERM
 EOF
 ```
 
-On next boot, selecting the GRUB entry boots into TTY and the systemd user service starts the server stack automatically.
-
-Useful commands:
-
-```bash
-systemctl --user status cicero-home-ai.service
-journalctl --user -u cicero-home-ai.service -f
-tail -f logs/gpu-0-1.log
-```
-
-## Configuration
-
-**`.env`** — ROCm build flags, HIP toolchain env and server flags:
-
-| Variable | Default | Description |
-|---|---|---|
-| `CMAKE_FLAGS` | `-DGGML_HIP=ON -DGPU_TARGETS=gfx1201 -DGGML_NATIVE=1 ...` | CMake flags for the llama.cpp build. |
-| `ROCM_PATH` / `HIP_PATH` / `HIPCXX` | `/opt/rocm`, `/opt/rocm`, `/opt/rocm/llvm/bin/clang++` | HIP toolchain, exported so cmake's `enable_language(HIP)` finds ROCm's clang. |
-| `SERVER_FLAGS` | `--host 0.0.0.0 --models-max 1` | Base flags passed to `llama-server`; `run.sh` overrides `--models-max` to 3. |
-
-**`gpu-0-1/`** owns the preset, its `active.ini` symlink, the runner, and the service unit. `model =` paths inside the preset stay relative to the repo root because `run.sh` changes there before launching. Device and split settings belong in each model section; do not pass a global `--device`, which would override them.
-
-## Models
-
-The active preset is sized for two 32 GB cards in TTY mode. Running a desktop consumes roughly 2–4 GB of VRAM and may require smaller contexts.
-
-| Router | Model id | Model |
-|---|---|---|
-| ROCm0+ROCm1 (:8080) | `qwen3.8-27b` | Qwen3.8 27B UD-Q5_K_M with built-in MTP, tensor split, 2 × 196608-token slots |
-| ROCm0+ROCm1 (:8080) | `llm` | GPT-OSS 20B UD-Q8_K_XL, 38/62 tensor split, 2 × 131072-token slots |
-| ROCm0 (:8080) | `reranker` | Qwen3-Reranker 0.6B Q8_0, one 4096-token slot, `/v1/rerank` for Hindsight |
-
-Hindsight uses its `litellm` reranker provider with API base `http://127.0.0.1:8080/v1`, which maps directly to llama.cpp's `/v1/rerank`; no adapter is required. All repository-owned Hindsight service files, prompts, experiments, and workload benchmarks live under [`hindsight/`](hindsight/README.md).
-
-### Adding or changing models
-
-**1.** Add the model to `models/list.txt`, using tab-separated columns:
-
-```text
-<local-folder>    <huggingface-repo>    <filename-in-repo>    [local-rename]
-```
-
-The optional fourth column renames the downloaded file locally. Run `./models/update.sh` to download models without rebuilding, or use the top-level `./update.sh` workflow.
-
-**2.** Add a preset section to `gpu-0-1/combined.ini`:
-
-```ini
-[my-model@q5]
-model = models/<local-folder>/<filename>.gguf
-temp = 1.0
-top-p = 0.95
-repeat-penalty = 1.0
-```
-
-- The section name (`my-model@q5`) is the model identifier used in API requests.
-- Global settings from `[*]` (GPU layers, flash attention, etc.) are inherited automatically.
-- Add sampling params per model, or omit them for agent-facing models (agents send their own).
-- Always set `repeat-penalty = 1.0` to explicitly disable it.
-- To remove a model, delete its preset section and its row from `models/list.txt`.
-
 ## Layout
 
 ```
-.env                        # ROCm cmake flags + HIP toolchain env + SERVER_FLAGS
-build.sh                    # git pull + rebuild
-install.sh                  # first-time setup (deps, clone, systemd service)
-switch                      # select/reload the combined preset and show status
-update.sh                   # stop, rebuild, update models, start
+install.sh                  # first-time setup (sudo)
+update.sh                   # pull image, fetch model if missing, sync unit, restart
 start.sh / stop.sh          # systemd service control
-gpu-0-1/                    # the only GPU/service folder
-  combined.ini              #   tensor-split chat + LLM, reranker on ROCm0
-  active.ini                #   symlink to the active preset
-  run.sh                    #   Open WebUI :3000 + llama-server :8080
-  install-service.sh        #   install/update the unit; retire legacy units
-  cicero-home-ai.service    #   the single systemd user unit
+rad/
+  config.env                #   all settings: image pin, model, port, host pool
+  compose.yaml              #   radiance engine flags
+  run.sh                    #   Open WebUI :3000 + radiance :8080, foreground
+  cicero-rad.service        #   the systemd user unit
+  install-service.sh        #   install/enable the unit; retire legacy units
+  bench-openai.py           #   decode / prefill / mixed / tool-call benchmark
+  state/                    #   prefix-cache disk tier (gitignored)
 gpu-power/                  # boot-time GPU power cap (system unit, root)
-  cicero-gpu-power.service  #   oneshot; GPU_POWER_CAP_W=250 (range 210-300)
-  set-power-cap.sh          #   amd-smi set on every GPU, then verify the limit
-  install.sh                #   install unit + root-owned script copy, apply now
-vllm/                       # alternative stack: Qwen3.8-27B FP8 on vLLM (radiance), see vllm/README.md
-  config.env                #   all settings (image pin, model, GPU_UTIL, context, MTP)
-  run.sh                    #   Open WebUI :3000 + vLLM :8080; cicero-vllm.service
-  install.sh / update.sh    #   pull image, download model, install unit / refresh
-llama.cpp/                  # llama.cpp source + build (cloned by install.sh, gitignored)
-models/
-  list.txt                  # tab-separated HuggingFace model manifest
-  install.sh                 # install the HuggingFace CLI
-  update.sh                  # download/update every manifest entry
-  <model>/
-    *.gguf                   # downloaded model files
-benchmark/
-  bench.sh                   # llama-bench runner (single GPU, ROCm) using ../llama.cpp
-  bench-split.sh             # compare one-card, layer-split, and tensor-split layouts
-  reports/                   # generated generic benchmark reports
-hindsight/
-  README.md                  # current deployment and operational commands
-  update.sh                  # backup + upgrade API and matching Control Plane
-  ui/
-    install.sh               # install the Control Plane and enable its user unit
-    hindsight-ui.service     # persistent Hindsight Web UI on :9999
-  benchmark/                 # Hindsight workload, concurrency, and end-to-end benchmarks
-  templates/                 # Retain, Consolidate, and gpt-oss prompt templates
-  experiments/               # dated investigations, measurements, and incidents
+models/rad/                 # the .rad model container (gitignored)
+hindsight/                  # Hindsight memory server: docs, updater, UI unit, benchmark, history
+logs/                       # rad.log (gitignored)
 ```
+
+Earlier llama.cpp and vLLM deployments were removed from the tree; their
+measurements remain in [`hindsight/experiments/`](hindsight/experiments/README.md),
+and their scripts are in git history.

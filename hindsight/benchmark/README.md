@@ -1,22 +1,13 @@
 # Hindsight benchmarks
 
-Ad hoc performance comparisons against the shared `../../llama.cpp/` build. Nothing
-here is a standalone checkout — the binaries are the same ones `run.sh` serves
-with, so a number measured here is a number the deployment can actually reach.
-
 | file | what it measures |
 | --- | --- |
-| `bench-mtp.sh` | MTP (self-speculative decoding) A/B **on the Hindsight workload**, with per-model server flags embedded in the script |
-| `bench-combined.sh` | the same workload against the live combined router and resident production models |
-| `bench-streams.py` | isolated prefill, decode, and mixed-stream concurrency against the live router |
-| `hindsight-load.py` | the load generator behind `bench-mtp.sh`: replays Hindsight's request shape against any `llama-server` |
-| `bench-hindsight.py` | end-to-end against the real Hindsight service (banks, Recall, rerank), not the router |
-| `gemma-retain-consolidate.py` | disposable-bank Gemma stress test for Retain and Consolidation only |
+| `bench-hindsight.py` | end-to-end against the real Hindsight service (banks, Recall, rerank, Reflect) |
+| `../../rad/bench-openai.py` | the LLM server alone: decode, prefill, mixed load and tool calls over the OpenAI API |
 
-`bench-mtp.sh` and `hindsight-load.py` measure llama.cpp under Hindsight-shaped
-load. `bench-combined.sh` and `bench-streams.py` measure the live shared router.
-`bench-hindsight.py` measures Hindsight itself. Use the synthetic tools to choose
-a model or server flag, then confirm the whole system end to end.
+`bench-hindsight.py` runs disposable banks plus a read-only pass over a
+production bank; see its docstring. Stop other clients of `:8080` first: the
+radiance stack is shared with Open WebUI.
 
 ## The Hindsight workload
 
@@ -49,14 +40,13 @@ recorded between 2026-08-05 16:30 and 2026-08-06 07:43 (87 traces).
 | reflect | 33 (7%) | 13% | 14,369 (p90 31.6k, max 38k) | not reported | ~16,207 | 82 / 446 | 1.33 / 4 |
 
 Median durations: consolidation 2.61 s, retain 8.71 s, reflect 6.31 s. Total
-LLM time across the 480 calls: 2,070 s, i.e. **431 s per 100 calls** — the
-figure `bench-mtp.sh`'s `mix, per 100 calls` row is the synthetic analogue of.
+LLM time across the 480 calls: 2,070 s, i.e. **431 s per 100 calls**.
 
 **This is decode-dominated, and the old "Prefill dominates the LLM cost"
 section is wrong for this bank.** Across the recorded mix, uncached prompt
-tokens total ~1.71M against ~170k generated; at this machine's 4,139 tok/s
-prefill and 134 tok/s decode that is ~430 s of prefill against ~1,270 s of
-decode. The "~90% prompt processing" claim was generalised from four hand-timed
+tokens total ~1.71M against ~170k generated; at the llama.cpp stack's 4,139
+tok/s prefill and 134 tok/s decode that was ~430 s of prefill against ~1,270 s
+of decode. The "~90% prompt processing" claim was generalised from four hand-timed
 `hermes` calls with 23k prompts and 50-250 token outputs. Retain in particular
 is the opposite shape: ~131 new prompt tokens against 679 generated.
 
@@ -95,112 +85,7 @@ observations. The gaps are non-LLM work (recall, embeddings, DB).
 Reflect is separate and rarer: a 3-4 turn tool loop whose prompt grows from
 ~2.3k to 14k-38k tokens, producing 800-2,400 output tokens per Reflect.
 
-### Prompt structure and caching
-
-Hindsight builds every prompt as a **stable bank-agnostic prefix plus a
-variable user turn**. `build_consolidation_system_prompt()` carries only the
-processing rules, input format, decision guide and output format; the bank's
-MISSION is pushed into the user message by `build_consolidation_input()`.
-Retain does the same through `_retain_mission_preamble()`. The docstrings give
-the reason: baking the mission into the system prompt would make the prefix
-bank-specific and force a separate cache per mission.
-
-**Hindsight's own prefix-cache machinery is inert in this deployment.**
-`get_or_create_cached_prefix()` is gated on `supports_prompt_caching()`, which
-only the Gemini provider implements; this deployment runs
-`HINDSIGHT_API_LLM_PROVIDER=openai`, so the call takes the uncached path. What
-shows up in `cached_tokens` is **llama.cpp's slot prefix cache** —
-`openai_compatible_llm.py` reads `usage.prompt_tokens_details.cached_tokens`,
-which llama.cpp fills from `n_prompt_tokens_cache`
-(`tools/server/server-task.cpp`). Hindsight's prompt split still pays off, just
-through llama.cpp instead of its own provider cache.
-
-The hit boundaries land exactly where the split predicts:
-
-| operation | system prompt | cached per call | effect |
-| --- | ---: | ---: | --- |
-| retain | 7,166 chars | 1,679-1,681 | a 1,810-token prompt costs ~131 new tokens |
-| consolidation | 9,740 chars | 2,383 first call, 2,426-2,427 after | the extra ~43 tokens are the MISSION block opening the user message — constant per bank, so the match runs past the system prompt into the user turn |
-| reflect | 8,417 chars | not reported | — |
-
-The two different prefixes alternate on the same router without permanently
-evicting each other because `gpu-0-1/combined.ini`'s `[*]` sets `cache-ram = -1`: an
-evicted slot prefix is restored from host RAM instead of reprocessed. `[qwen3.8-27b]`
-overrides it with a 32 GiB cap: as a hybrid model its entries carry ~150 MB
-recurrent-state snapshots each, so uncapped it grew to ~100 GB of host RAM. Any
-benchmark that sets `cache_prompt: false`, or that varies the system prompt
-between requests, roughly doubles the prefill it measures and is not measuring
-this deployment.
-
-## How the bench models it
-
-`hindsight-load.py` profiles, all derived from the table above:
-
-| profile | prompt target | max output | concurrency | share of calls | grammar |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `retain` | 2,365 | 600 | 2 | 16% | strict JSON schema |
-| `consolidate` | 5,493 | 255 | 1 | 77% | strict JSON schema |
-| `reflect` | 14,369 | 450 | 1 | 7% | none |
-| `reflect-long` | 31,564 (p90) | 450 | 1 | — | none |
-
-Faithful to the deployment: the real system prompts (read from `llm_requests`,
-falling back to `../templates/*.md`), the shared cached prefix with a freshly
-generated payload per request, strict schemas on Retain and Consolidation,
-per-operation concurrency from the recorded overlap, no client-side sampling
-except Retain's 0.1, and Hindsight's `LLM_EXTRA_BODY`
-(`chat_template_kwargs.reasoning_effort=low`).
-
-**Thinking policy.** gpt-oss reasons at `effort=low`: it cannot be switched
-off, low is its native output bound, it is what Hindsight sends, and
-`../experiments/2026-08-installation-and-tuning-log.md` records that raising it
-is net worse end to end. Its recorded
-`output_tokens` — the basis for the profiles' output caps — already include
-those reasoning tokens. Every other model runs with `-rea off`
-(`enable_thinking=false`), so its capped budget goes to the answer instead: Qwen
-3.6's template defaults thinking **on** and would otherwise spend most of the
-budget reasoning, while Gemma 4 already defaults it off and the flag only makes
-that explicit. This is a bench-only choice — Hindsight sends no
-`enable_thinking`, so a Qwen deployed as its LLM *would* think. Drop
-`$NO_THINK` from a model's flags in `bench-mtp.sh` to measure that case.
-
-Known approximations:
-
-- **Profiles run in isolation, reality is a chain.** The bench measures each
-  operation separately; production runs 1 retain then ~4.8 serial
-  consolidations with ~1 s of non-LLM gap between them. The `mix, per 100
-  calls` row reassembles the cost by call share, but never exercises the prefix
-  alternation the real chain causes.
-- **Reflect is replayed as a single turn** at the loop's dominant size, not as
-  the 3-4 turn tool loop it really is.
-- **The payloads are synthetic** — bilingual filler calibrated against the
-  server's own `/tokenize` to hit the recorded token targets. Only the system
-  prompts are real. Replaying the stored `input` prompts verbatim would be more
-  faithful still, and the DB makes it possible.
-- **The LLM runs alone on the card**, while production shares GPU1 with the
-  resident reranker. Absolute numbers are optimistic; an A/B between two modes
-  is not affected.
-- **No queueing.** Recorded durations include time spent waiting on Hindsight's
-  semaphore; the bench's do not. This is most of the gap between the bench's
-  per-call figures and the DB's `duration_ms`.
-
-## Running
-
-```bash
-./bench-mtp.sh                  # every model, every profile, baseline vs draft-mtp
-./bench-mtp.sh gpt-oss          # filter by label substring
-PROFILES="consolidate" REPEATS=5 ./bench-mtp.sh qwen3.8-27b
-CONCURRENCY=3 ./bench-mtp.sh    # force the saturated case instead of measured overlap
-```
-
-Reports land in `reports/`. **Read the `mix, per 100 calls` row** — it weights
-each profile's burst by that operation's share of recorded calls and is the
-figure the MTP decision turns on. Per-profile `burst` is the per-operation
-view; `pp t/s` and `tg t/s` are diagnostics that explain it. A model where
-decode rises and the mix rises is losing.
-
-### Measurement hygiene
-
-**An unloaded card is not an idle test bed.** Stop `cicero-home-ai.service` and
-`hindsight.service` before benchmarking — `bench-mtp.sh` warns if they are up
-and prints GTT before each load, because a GTT spill (not VRAM exhaustion) is
-what silently halved throughput in earlier contaminated runs.
+Hindsight builds every prompt as a stable bank-agnostic system prompt plus a
+variable user turn (the bank's mission goes into the user message), so the
+server's prefix cache serves the system prompt; `cached_tokens` in
+`llm_requests` is what the server reports for it.
