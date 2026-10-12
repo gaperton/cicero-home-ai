@@ -143,7 +143,7 @@ def run_tools(base, model, n):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:8080")
-    ap.add_argument("--model", default="qwen3.8-27b")
+    ap.add_argument("--model", default="qwen-local")
     ap.add_argument("--label", required=True)
     ap.add_argument("--conc", default="1,2,4,8")
     ap.add_argument("--reps", type=int, default=3)

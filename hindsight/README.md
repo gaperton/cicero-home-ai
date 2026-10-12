@@ -12,7 +12,7 @@ and reranks on `seneca.local`.
 | Hindsight API | `http://cicero.local:8888` | `hindsight.service` | `hindsight-api` 0.10.1 from PyPI |
 | Control Plane (web UI) | `http://cicero.local:9999` | `hindsight-ui.service` | `@vectorize-io/hindsight-control-plane`, same version as the API |
 | Database | local socket, `127.0.0.1:5432` | host PostgreSQL 18 | database `hindsight` with `vector` and `pg_trgm`, role `gaperton`, peer authentication |
-| LLM (Retain, Consolidation, Reflect) | `http://127.0.0.1:8080/v1` | `cicero-rad.service` | Qwen3.8-Flash-Next on radiance, model id `qwen3.8-flash-next` |
+| LLM (Retain, Consolidation, Reflect) | `http://127.0.0.1:8080/v1` | `cicero-rad.service` | the active radiance profile (Qwen3.8-27B or Qwen3.8-Flash-Next), model id `qwen-local` |
 | Reranker | `http://seneca.local:8080/v1` | llama.cpp router on `seneca` | Qwen3-Reranker 0.6B Q8_0, model id `qwen3-reranker` |
 | Embeddings | in-process | `hindsight.service` | `BAAI/bge-m3` on CPU, 1024 dimensions |
 
@@ -26,7 +26,7 @@ and reranks on `seneca.local`.
           |
           +--> PostgreSQL (local socket)             memories, vectors, llm_requests
           +--> bge-m3 on CPU (in-process)            embeddings
-          +--> radiance :8080  qwen3.8-flash-next    Retain, Consolidation, Reflect
+          +--> radiance :8080  qwen-local            Retain, Consolidation, Reflect
           +--> seneca.local:8080  qwen3-reranker     Recall reranking
 ```
 
@@ -57,7 +57,7 @@ switching.
 
 | Setting | Value |
 | --- | --- |
-| `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODEL` | `openai`, `http://127.0.0.1:8080/v1`, `qwen3.8-flash-next` |
+| `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODEL` | `openai`, `http://127.0.0.1:8080/v1`, `qwen-local` |
 | `REFLECT_LLM_PROVIDER` / `REFLECT_LLM_BASE_URL` / `REFLECT_LLM_MODEL` | same as `LLM_*`; refresh inherits it |
 | `LLM_MAX_CONCURRENT` | `4` |
 | `RETAIN_` / `REFLECT_` / `CONSOLIDATION_LLM_MAX_CONCURRENT` | `3` each |

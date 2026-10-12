@@ -1,8 +1,9 @@
-# rad/compose.yaml — Qwen3.8-Flash-Next on both R9700s (TP=2) via the radiance engine
-# (codeberg.org/StillDeadcode/radiance). Flags follow upstream deploy/compose/flashnext.yaml,
-# except the context: the full trained 262144 (upstream example: 200000).
+# rad/compose.yaml — the active model profile on both R9700s (TP=2) via the radiance engine
+# (codeberg.org/StillDeadcode/radiance). Flags common to every profile are here; a profile's
+# own come in as RADIANCE_ARGS. Context: the full trained 262144 (upstream examples: 200000).
 # Started in the foreground by run.sh under cicero-rad.service; variables come from
-# config.env (exported by run.sh). No restart policy: systemd supervises. No API key.
+# config.env and rad/profiles/<profile>.env (exported by run.sh). No restart policy: systemd
+# supervises. No API key.
 
 name: cicero-rad
 
@@ -29,23 +30,19 @@ services:
       - ${RADIANCE_MODELS}:/models:ro
       - ${RADIANCE_STATE}:/data
     stop_grace_period: 60s
-    # The parser takes "--flag value", not "--flag=value". Experts that do not fit VRAM
-    # stream from a pinned host pool (per card); 256 MiB headroom: the engine asks >= 226.
+    # The parser takes "--flag value", not "--flag=value". 256 MiB headroom: the engine
+    # asks >= 226. Each profile keeps its prefix cache in its own directory.
     command: >
       --model /models/${RADIANCE_MODEL}
       --served-model-name ${SERVED_MODEL_NAME}
       --host ${HOST}
       --port ${PORT}
       --tp 2
-      --tp-wire wht6
       --max-num-seqs 8
       --max-model-len 262144
-      --placement expert_tiered
-      --host-pool-mib ${HOST_POOL_MIB}
       --gpu-headroom-mib 256
       --kv-cache-dtype fp8
       --prefix-cache-host-mib 4096
-      --prefix-cache-dir /data/kvcache/flashnext
+      --prefix-cache-dir /data/kvcache/${RADIANCE_PROFILE}
       --prefix-cache-disk-mib 131072
-      --num-speculative-tokens 3
-      --max-num-batched-tokens 2048
+      ${RADIANCE_ARGS}

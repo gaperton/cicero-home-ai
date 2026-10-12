@@ -2,7 +2,7 @@
 # rad/run.sh — Open WebUI and the radiance server. Run by cicero-rad.service in
 # the foreground; exits when either child dies.
 #
-# radiance: :$PORT, model $SERVED_MODEL_NAME. Open WebUI: :3000, pointed at it.
+# radiance: :$PORT, the model of rad/profiles/$RADIANCE_PROFILE.env. Open WebUI: :3000, pointed at it.
 set -euo pipefail
 
 RAD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +19,9 @@ fi
 set -a
 # shellcheck source=config.env
 source "$RAD_DIR/config.env"
+[ -f "$RAD_DIR/profiles/$RADIANCE_PROFILE.env" ] || { echo "rad/run.sh: no profile rad/profiles/$RADIANCE_PROFILE.env" >&2; exit 1; }
+# shellcheck source=/dev/null
+source "$RAD_DIR/profiles/$RADIANCE_PROFILE.env"
 RADIANCE_MODELS="$REPO/$RADIANCE_MODELS"
 RADIANCE_STATE="$REPO/$RADIANCE_STATE"
 # For compose.yaml: run as this user, with the groups that open /dev/kfd and /dev/dri.
@@ -30,7 +33,7 @@ set +a
 
 [ -f "$RADIANCE_MODELS/$RADIANCE_MODEL" ] || { echo "rad/run.sh: no model at $RADIANCE_MODELS/$RADIANCE_MODEL" >&2; exit 1; }
 # The engine does not create the disk tier's directory; without it the tier is off.
-mkdir -p "$RADIANCE_STATE/kvcache/flashnext"
+mkdir -p "$RADIANCE_STATE/kvcache/$RADIANCE_PROFILE"
 
 # A user unit cannot order itself after the system docker.service; wait for it.
 for _ in $(seq 60); do docker info >/dev/null 2>&1 && break; sleep 2; done
@@ -58,7 +61,7 @@ export OPENAI_API_BASE_URLS="http://127.0.0.1:$PORT/v1"
 open-webui serve --port 3000 &
 PIDS+=("$!")
 
-echo "rad: $RADIANCE_IMAGE, $RADIANCE_MODEL as $SERVED_MODEL_NAME on $HOST:$PORT (host pool $HOST_POOL_MIB MiB/card)"
+echo "$(date -Is) rad: $RADIANCE_IMAGE, profile $RADIANCE_PROFILE: $RADIANCE_MODEL as $SERVED_MODEL_NAME on $HOST:$PORT, extra flags: ${RADIANCE_ARGS:-none}"
 "${COMPOSE[@]}" up --no-log-prefix &
 PIDS+=("$!")
 

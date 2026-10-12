@@ -1,5 +1,5 @@
 [Unit]
-Description=Cicero Open WebUI and radiance (Qwen3.8-Flash-Next), ROCm0+ROCm1
+Description=Cicero Open WebUI and radiance (model: rad/config.env profile), ROCm0+ROCm1
 After=network-online.target
 Wants=network-online.target
 

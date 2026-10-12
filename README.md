@@ -1,12 +1,14 @@
 # cicero-home-ai
 
 A home AI server on two AMD Radeon AI PRO R9700 cards (gfx1201, 32 GB each,
-121 GB host RAM). It runs one model, **Qwen3.8-Flash-Next**, on the
-[radiance](https://codeberg.org/StillDeadcode/radiance) inference engine.
+121 GB host RAM). It runs one model at a time on the
+[radiance](https://codeberg.org/StillDeadcode/radiance) inference engine:
+**Qwen3.8-Flash-Next** or **Qwen3.8-27B**. See
+[Switching models](#switching-models).
 
 | Service | Address | Unit |
 |---|---|---|
-| OpenAI-compatible API | `http://cicero.local:8080/v1`, model `qwen3.8-flash-next` | `cicero-rad.service` |
+| OpenAI-compatible API | `http://cicero.local:8080/v1`, model `qwen-local` | `cicero-rad.service` |
 | Open WebUI (chat) | `http://cicero.local:3000` | `cicero-rad.service` |
 | Hindsight memory API / Control Plane | `:8888` / `:9999` | `hindsight.service`, `hindsight-ui.service` — see [`hindsight/`](hindsight/README.md) |
 | GPU power cap, 250 W per card | — | `cicero-gpu-power.service` (system) |
@@ -18,7 +20,7 @@ Open WebUI and the radiance container (`docker compose`, `rad/compose.yaml`) in
 the foreground and exits as soon as either dies, so systemd restarts the
 whole stack. Both write to `logs/rad.log`.
 
-radiance serves the 114 GiB model container
+With the `flashnext` profile, radiance serves the 114 GiB model container
 `qwen3.8-next-flash-fp8-iq4r-moe.rad` (4-bit experts, int8 trunk, MTP head,
 vision tower) tensor-parallel across both cards:
 
@@ -56,7 +58,8 @@ Point any OpenAI-compatible client at `http://cicero.local:8080/v1`. No API key.
   `/v1/embeddings`.
 - **Model id:** chat and completion requests are served whatever `model` they
   name, but `GET /v1/models/<id>` returns 404 for anything other than
-  `qwen3.8-flash-next`, so a client that checks the model first needs that id.
+  `qwen-local`, so a client that checks the model first needs that id. Both
+  profiles use this id, so it does not tell which model is loaded.
 - **Unknown parameters are refused, not ignored.** A field the server does not
   implement returns HTTP 400. The common case is an OpenAI `reasoning` object;
   send `reasoning_effort` instead, one of `none`, `minimal`, `low`, `medium`,
@@ -92,6 +95,7 @@ Hindsight is installed separately; see [`hindsight/README.md`](hindsight/README.
 ./stop.sh                     # systemctl --user stop cicero-rad.service
 ./update.sh                   # re-pull the pinned image, sync the unit, restart
 ./update.sh 1.2.4             # move the pin to another radiance release, then the same
+./switch.sh                   # list model profiles; ./switch.sh 27b | flashnext to change
 tail -f logs/rad.log          # engine + Open WebUI log
 systemctl --user status cicero-rad.service
 curl -fsS http://127.0.0.1:8080/v1/models
@@ -108,16 +112,51 @@ radiance releases land several times a day, so the image tag is pinned in
 `rad/bench-openai.py` after a bump and compare it with the table above. Stop
 other clients first: Open WebUI and Hindsight share `:8080`.
 
+## Switching models
+
+Each model fills both cards and uses the same port, so one runs at a time.
+A profile in `rad/profiles/` describes each model. `RADIANCE_PROFILE` in
+`rad/config.env` names the one that is served.
+
+| Profile | Model | File |
+|---|---|---|
+| `flashnext` | Qwen3.8-Flash-Next, MoE; experts partly in pinned RAM | `qwen3.8-next-flash-fp8-iq4r-moe.rad`, 114 GiB |
+| `27b` | Qwen3.8-27B FP8, dense, DFlash2 drafter, vision; fits VRAM | `qwen3.8-27b-fp8.rad`, 28.67 GiB |
+
+```bash
+./switch.sh 27b               # download if missing, set RADIANCE_PROFILE, restart the stack
+```
+
+A switch restarts the whole stack, Open WebUI included, and the new model loads
+in a few minutes. Flash-Next is larger than the page cache can keep, so
+switching back to it reads the whole file from disk again. Each profile keeps
+its own prefix-cache directory (`rad/state/kvcache/<profile>/`, up to 128 GiB
+each).
+
+Both profiles are served as `qwen-local` (`SERVED_MODEL_NAME` in
+`rad/config.env`), so clients need no change. The id therefore does not tell
+which model answered: Hindsight's `llm_requests`, Open WebUI's history and
+`bench-results.jsonl` all show `qwen-local`. Each start writes a dated
+`rad: … profile <name> …` line to `logs/rad.log`; match timestamps against
+those lines (`grep ' rad: ' logs/rad.log`), and label benchmarks with the
+profile. Running Hindsight on the 27B is an LLM change: validate it as
+[`hindsight/README.md`](hindsight/README.md) describes.
+
+A profile pins its Hugging Face revision: upstream replaces `.rad` files under
+the same name. An existing file is never re-fetched; to take a new revision,
+update `RADIANCE_MODEL_REVISION` and delete the file.
+
 ## Configuration
 
 | File | Holds |
 |---|---|
-| `rad/config.env` | Image tag, model file and its Hugging Face repo, served model id, host/port, expert host pool per card |
-| `rad/compose.yaml` | Engine flags: TP, sequences, context, placement, KV dtype, prefix-cache tiers, speculative tokens. The parser takes `--flag value`, not `--flag=value` |
+| `rad/config.env` | Image tag, active profile, served model id, model and state directories, host/port |
+| `rad/profiles/<name>.env` | Model file, its Hugging Face repo and pinned revision, the model's own engine flags (`RADIANCE_ARGS`; Flash-Next's expert host pool) |
+| `rad/compose.yaml` | Engine flags every profile shares: TP, sequences, context, KV dtype, prefix-cache tiers. The parser takes `--flag value`, not `--flag=value` |
 | `rad/cicero-rad.service` | The user unit; `rad/install-service.sh` installs it (paths are rewritten to the repo's location) |
 | `gpu-power/cicero-gpu-power.service` | `GPU_POWER_CAP_W` (210–300). Re-run `sudo gpu-power/install.sh` after editing |
 
-`HOST_POOL_MIB` trades RAM for VRAM: experts the pool cannot hold take card
+`HOST_POOL_MIB` (Flash-Next) trades RAM for VRAM: experts the pool cannot hold take card
 memory away from the KV cache.
 
 `rad/state/kvcache/` holds conversation KV on disk, unencrypted.
@@ -158,17 +197,20 @@ EOF
 ```
 install.sh                  # first-time setup (sudo)
 update.sh                   # pull image, fetch model if missing, sync unit, restart
+switch.sh                   # change the served model profile, restart
 start.sh / stop.sh          # systemd service control
 rad/
-  config.env                #   all settings: image pin, model, port, host pool
-  compose.yaml              #   radiance engine flags
+  config.env                #   shared settings: image pin, active profile, served id, port
+  profiles/                 #   one .env per model: file, repo + revision, model flags
+  compose.yaml              #   radiance engine flags common to all profiles
+  fetch-model.sh            #   download a profile's model if missing
   run.sh                    #   Open WebUI :3000 + radiance :8080, foreground
   cicero-rad.service        #   the systemd user unit
   install-service.sh        #   install/enable the unit; retire legacy units
   bench-openai.py           #   decode / prefill / mixed / tool-call benchmark
   state/                    #   prefix-cache disk tier (gitignored)
 gpu-power/                  # boot-time GPU power cap (system unit, root)
-models/rad/                 # the .rad model container (gitignored)
+models/rad/                 # the .rad model containers (gitignored)
 hindsight/                  # Hindsight memory server: docs, updater, UI unit, benchmark, history
 logs/                       # rad.log (gitignored)
 ```

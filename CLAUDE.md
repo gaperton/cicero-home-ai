@@ -4,32 +4,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Deployment scripts and config for a home LLM server: no build system, no tests. The machine has two AMD Radeon AI PRO R9700 cards (gfx1201, 32 GB each), 121 GB RAM, boots to TTY, and runs one model, Qwen3.8-Flash-Next, on the **radiance** engine (`codeberg.org/StillDeadcode/radiance`, C++/HIP, `.rad` model containers, Docker image `stilldeadcode/radiance`). radiance is unrelated to `vllm-radiance`, which the removed vLLM stack used.
+Deployment scripts and config for a home LLM server: no build system, no tests. The machine has two AMD Radeon AI PRO R9700 cards (gfx1201, 32 GB each), 121 GB RAM, boots to TTY, and runs one model at a time, Qwen3.8-Flash-Next or Qwen3.8-27B (`RADIANCE_PROFILE` in `rad/config.env` says which), on the **radiance** engine (`codeberg.org/StillDeadcode/radiance`, C++/HIP, `.rad` model containers, Docker image `stilldeadcode/radiance`). radiance is unrelated to `vllm-radiance`, which the removed vLLM stack used.
 
 The llama.cpp, vLLM, ASR/TTS and reranker stacks were removed on 2026-10-12. Do not reintroduce them, or reference their scripts as if they existed; history is in git and in `hindsight/experiments/`.
 
 ## Architecture
 
-- `cicero-rad.service` (systemd user unit) → `rad/run.sh` → Open WebUI on `:3000` plus `docker compose up` of `rad/compose.yaml` (radiance on `:8080`, model id `qwen3.8-flash-next`). `run.sh` exits when either child dies; systemd restarts the whole stack. Both log to `logs/rad.log`.
+- `cicero-rad.service` (systemd user unit) → `rad/run.sh` → Open WebUI on `:3000` plus `docker compose up` of `rad/compose.yaml` (radiance on `:8080`, model id `qwen-local` whichever profile is loaded). `run.sh` exits when either child dies; systemd restarts the whole stack. Both log to `logs/rad.log`.
 - The unit runs as the user. `run.sh` and `update.sh` re-exec under `sg docker` when the login session predates the user's `docker` group membership.
-- `rad/config.env` holds every setting (image tag, model file + HF repo, served id, port, `HOST_POOL_MIB`); `rad/compose.yaml` holds engine flags. Paths in `config.env` are relative to the repo root.
-- `rad/state/kvcache/` is the prefix cache's disk tier (gitignored, unencrypted conversation KV). The engine does not create the directory; `run.sh` does, and without it the tier is silently off.
-- `models/rad/` holds the 114 GiB model (gitignored). `update.sh` downloads it only when missing; the filename is versioned, so an existing file is never re-fetched.
+- **Model profiles:** `rad/profiles/<name>.env` (`flashnext`, `27b`) holds the model file, its HF repo + pinned revision and the model's own engine flags (`RADIANCE_ARGS`, e.g. Flash-Next's `expert_tiered`/`HOST_POOL_MIB`). `RADIANCE_PROFILE` in `rad/config.env` picks one; `./switch.sh <name>` downloads it if missing, sets it and restarts the stack. Both models fill both cards, so they never run together.
+- `rad/config.env` holds the shared settings (image tag, active profile, served id `qwen-local`, dirs, host/port); `rad/compose.yaml` holds the engine flags every profile shares. Paths in `config.env` are relative to the repo root.
+- `rad/state/kvcache/<profile>/` is the prefix cache's disk tier (gitignored, unencrypted conversation KV, up to 128 GiB per profile). The engine does not create the directory; `run.sh` does, and without it the tier is silently off.
+- `models/rad/` holds the model files (gitignored; Flash-Next 114 GiB, 27B 28.67 GiB). `rad/fetch-model.sh` downloads only when the file is missing. Upstream replaces `.rad` files under the same name, so each profile pins `RADIANCE_MODEL_REVISION`; taking a new revision means updating it and deleting the file.
 - `gpu-power/` — root system unit `cicero-gpu-power.service` caps both cards' PPT0 at 250 W (`GPU_POWER_CAP_W`, 210–300) on every boot; the cap does not survive a reboot otherwise. `sudo gpu-power/install.sh` installs a root-owned copy of `set-power-cap.sh`; re-run it after editing either file.
 - `hindsight/` — the Hindsight memory server's docs, updater, Control Plane unit and end-to-end benchmark. Hindsight sends all LLM calls to `:8080`; its reranker runs on `seneca.local` because radiance leaves no VRAM. `hindsight/experiments/` is history.
 
 **Script flow:**
 - `install.sh` (sudo): apt (Docker, pipx) → `amd-smi` check → `gpu-power/install.sh` → `docker` group → `hf` CLI + Open WebUI (Python 3.11 via uv) → linger → `rad/install-service.sh`
-- `update.sh [tag]`: optionally re-pin the tag in `config.env` → `docker pull` → model download if missing → `rad/install-service.sh` → restart
+- `update.sh [tag]`: optionally re-pin the tag in `config.env` → `docker pull` → active profile's model download if missing → `rad/install-service.sh` → restart
+- `switch.sh [profile]`: no argument lists profiles; otherwise `rad/fetch-model.sh` → set `RADIANCE_PROFILE` → restart
 - `rad/install-service.sh`: disables and deletes the legacy units (`cicero-home-ai`, `cicero-vllm`, `cicero-tts-server`, `cicero-asr-proxy`, `cicero-vulkan*`), installs `cicero-rad.service` with paths rewritten to the repo location, enables it.
 
 ## Engine facts (radiance 1.2.3)
+
+Measured on the `flashnext` profile; the `27b` profile has not been started or benchmarked here yet.
 
 - **Memory:** both cards end up ~99% full: ~4.2 GiB static weights, ~17.7 GiB experts, ~7.6 GiB KV per card. Experts that do not fit stream from a pinned host pool (`HOST_POOL_MIB`, 12 GiB per card); the 47.7 GiB n-gram table is placed in pinned RAM. ~85 GB RAM in use while serving. Raising the host pool frees VRAM for the KV cache. Nothing else GPU-bound can run alongside it.
 - **Where things landed is in the log:** read the `placement:`, `VRAM budget` and `kv:` lines of the latest startup in `logs/rad.log` before claiming anything about placement, memory or KV capacity.
 - **CLI syntax:** `--flag value` only; `--flag=value` fails as an unknown option. `--gpu-headroom-mib` must be ≥ ~226 (upstream's 96 warns).
 - **Strict API:** an unimplemented request field returns HTTP 400 instead of being ignored. Clients sending an OpenAI `reasoning` object fail this way. `reasoning_effort` accepts `none`, `minimal`, `low`, `medium`, `xhigh`; `high`/`max` are refused.
-- **Model id:** chat and completion requests are served for any `model`; `GET /v1/models/<id>` 404s for anything but `qwen3.8-flash-next`.
+- **Model id:** chat and completion requests are served for any `model`; `GET /v1/models/<id>` 404s for anything but `qwen-local`. Every profile is served under that id, so `llm_requests` rows, Open WebUI chats and bench results do not say which model answered: attribute them by timestamp against the dated `rad: … profile <name>` start lines in `logs/rad.log`.
 - **Endpoints:** `/v1/chat/completions`, `/v1/completions`, image and video input. No `/v1/responses`, `/v1/messages`, or `/v1/embeddings`.
 - **Baseline** (`rad/bench-openai.py`, 1.2.3): decode 121 tok/s single stream, 212/316/448 aggregate at 2/4/8; prefill 3.6–4.2K tok/s; 15/15 tool calls. Prefill prompts come from Python's stdlib source, so numbers taken before 2026-10-12 used different text.
 

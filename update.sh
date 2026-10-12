@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# update.sh — Pull the pinned radiance image, download the model if missing,
-# sync the user unit, and (re)start the stack.
+# update.sh — Pull the pinned radiance image, download the active profile's model
+# if missing, sync the user unit, and (re)start the stack. ./switch.sh changes the model.
 #
 #   ./update.sh            # re-pull RADIANCE_IMAGE from rad/config.env
 #   ./update.sh 1.2.4      # switch rad/config.env to that radiance tag first
@@ -33,13 +33,9 @@ else
     docker pull "$RADIANCE_IMAGE"
 fi
 
-# The model is ~114 GiB and named by version, so an existing file is never re-fetched.
-model="$REPO/$RADIANCE_MODELS/$RADIANCE_MODEL"
-if [ ! -f "$model" ]; then
-    command -v hf >/dev/null || { echo "error: 'hf' not found; run sudo ./install.sh first" >&2; exit 1; }
-    hf download "$RADIANCE_MODEL_REPO" "$RADIANCE_MODEL" --local-dir "$REPO/$RADIANCE_MODELS"
-fi
+# An existing model file is never re-fetched; a new revision means a new file name or deleting it.
+"$REPO/rad/fetch-model.sh" "$RADIANCE_PROFILE"
 
 "$REPO/rad/install-service.sh"
 systemctl --user restart "$UNIT"
-echo "Updated: $RADIANCE_IMAGE, $RADIANCE_MODEL. Log: tail -f logs/rad.log"
+echo "Updated: $RADIANCE_IMAGE, profile $RADIANCE_PROFILE. Log: tail -f logs/rad.log"
