@@ -22,7 +22,9 @@ whole stack. Both write to `logs/rad.log`.
 
 With the `flashnext` profile, radiance serves the 114 GiB model container
 `qwen3.8-next-flash-fp8-iq4r-moe.rad` (4-bit experts, int8 trunk, MTP head,
-vision tower) tensor-parallel across both cards:
+vision tower) tensor-parallel across both cards. `flashnext-uncensored` (the
+active profile) is the same model with refusals abliterated, at the same size
+and with the same flags:
 
 - **VRAM** — both cards are filled to ~99%: ~3.6 GiB of fixed weights, ~18 GiB
   of experts and ~8.2 GiB of KV cache per card. Nothing else GPU-bound can run
@@ -34,24 +36,30 @@ vision tower) tensor-parallel across both cards:
   FP8 KV cache. The pool holds ~4.0 full-length sessions; beyond that the
   scheduler preempts.
 - **Speculative decoding** — the model's MTP head drafts 3 tokens per step.
-- **Prefix cache** — finished conversations' KV moves to host RAM (4 GiB) and
-  then to disk (128 GiB in `rad/state/kvcache/`), so a returning conversation
-  skips its prefill.
+- **Prefix cache** — finished conversations' KV moves from VRAM to an 8 GiB
+  pinned host-RAM tier, so a returning conversation skips its prefill. Nothing
+  is written to disk; a restart loses the cache.
 
-Full run on 1.2.3 with `rad/bench-openai.py` (2026-10-07):
+Full run on 1.13.0 with `rad/bench-openai.py` (2026-10-27, `flashnext-uncensored`,
+driver 31.60), against the full run on 1.2.3 (2026-10-07, `flashnext`, driver 31.50):
 
 | | 1 stream | 2 | 4 | 8 |
 |---|---:|---:|---:|---:|
-| decode, aggregate tok/s | 117 | 212 | 316 | 448 |
-| decode, per request tok/s | 121 | 109 | 91 | 64 |
+| decode, aggregate tok/s, 1.13.0 | 122 | 215 | 310 | 474 |
+| decode, per request tok/s, 1.13.0 | 125 | 128 | 88 | 69 |
+| decode, aggregate tok/s, 1.2.3 | 117 | 212 | 316 | 448 |
 
-Prefill runs at 3.6–4.2K tok/s (4K–56K-token prompts); 15 of 15 tool-call
-probes returned well-formed calls.
+Prefill runs at 4.1–4.6K tok/s (4K–53K-token prompts; 1.2.3: 3.6–4.2K). A 25K
+prefill fired during a decode stream finishes in 6.6 s while that stream keeps
+62 tok/s. 15 of 15 tool-call probes returned well-formed calls. Decode is
+sampled at temperature 1.0, so MTP acceptance and per-prompt speed vary from run
+to run; the full run's three repetitions skip the fast `reason` prompt, so its
+single-stream median reads lower than the quick run's.
 
-A quick run on 1.4.0 (1 and 4 streams, one ~14K-token prefill) gave 143 and
-308 tok/s aggregate and 4.6K tok/s prefill, 15 of 15 tool calls. Against the
-same quick run on 1.2.3 on the same driver, that is +5% at 4 streams and +14%
-on prefill.
+The quick run (`--conc 1,4 --reps 4 --prefill 16384`) on the uncensored profile
+gave 155/324 aggregate tok/s at 1/4 streams and 4.66K tok/s prefill on 1.13.0,
+against 139/327 and 4.42K on 1.10.0 (2026-10-21) and 143/308 and 4.58K on
+1.4.0 (`flashnext`).
 
 ## Using the API
 
@@ -106,11 +114,11 @@ Hindsight is installed separately; see [`hindsight/README.md`](hindsight/README.
 ./stop.sh                     # systemctl --user stop cicero-rad.service
 ./update.sh                   # re-pull the pinned image, sync the unit, restart
 ./update.sh 1.2.4             # move the pin to another radiance release, then the same
-./switch.sh                   # list model profiles; ./switch.sh 27b | flashnext to change
+./switch.sh                   # list model profiles; ./switch.sh <profile> to change
 tail -f logs/rad.log          # engine + Open WebUI log
 systemctl --user status cicero-rad.service
 curl -fsS http://127.0.0.1:8080/v1/models
-./rad/bench-openai.py --label rad-1.4.0   # benchmark; results append to bench-results.jsonl
+./rad/bench-openai.py --label flashnext-rad-1.13.0   # benchmark; results append to bench-results.jsonl
 ```
 
 Startup takes a few minutes: the engine loads the model and copies the n-gram
@@ -132,6 +140,7 @@ A profile in `rad/profiles/` describes each model. `RADIANCE_PROFILE` in
 | Profile | Model | File |
 |---|---|---|
 | `flashnext` | Qwen3.8-Flash-Next, MoE; experts partly in pinned RAM | `qwen3.8-next-flash-fp8-iq4r-moe.rad`, 114 GiB |
+| `flashnext-uncensored` | The same, refusals abliterated | `qwen3.8-next-flash-uncensored-fp8-iq4r-moe.rad`, 114 GiB |
 | `27b` | Qwen3.8-27B FP8, dense, DFlash2 drafter, vision; fits VRAM | `qwen3.8-27b-fp8.rad`, 28.67 GiB |
 
 ```bash
@@ -146,6 +155,7 @@ allocated as pinned RAM at startup; finished conversations are copied there
 before their VRAM is reclaimed. Radiance removed
 the SSD prefix tier in 1.5.0 because of excessive writes (upstream issue #70);
 no conversation cache is written to disk, and a restart loses the cache.
+`DELETE /sessions/<label>` (since 1.12.0) forgets one stored conversation.
 
 Both profiles are served as `qwen-local` (`SERVED_MODEL_NAME` in
 `rad/config.env`), so clients need no change. The id therefore does not tell
@@ -173,9 +183,10 @@ update `RADIANCE_MODEL_REVISION` and delete the file.
 `HOST_POOL_MIB` (Flash-Next) trades RAM for VRAM: experts the pool cannot hold take card
 memory away from the KV cache.
 
-The image is pinned to 1.10.0. The quick Flash-Next uncensored benchmark gave
-139/327 aggregate tok/s at 1/4 streams, 4.4K tok/s prefill, and 15/15 tool calls.
-These are not a controlled comparison with the original-profile 1.4.0 baseline.
+Engine flags this setup leaves off: `--control-vector off|on` loads upstream's
+refusal-direction vector for Flash-Next (per request: `"control_vector": true`),
+redundant on the uncensored profile; `--attn-prefill-fp8` speeds up very long
+27B prompts (+20% at 221K tokens, lossy) and does not start on Flash-Next.
 
 ## Booting into TTY
 
