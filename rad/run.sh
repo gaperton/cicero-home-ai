@@ -23,7 +23,7 @@ source "$RAD_DIR/config.env"
 # shellcheck source=/dev/null
 source "$RAD_DIR/profiles/$RADIANCE_PROFILE.env"
 RADIANCE_MODELS="$REPO/$RADIANCE_MODELS"
-RADIANCE_STATE="$REPO/$RADIANCE_STATE"
+
 # For compose.yaml: run as this user, with the groups that open /dev/kfd and /dev/dri.
 RAD_UID="$(id -u)"
 RAD_GID="$(id -g)"
@@ -32,8 +32,7 @@ VIDEO_GID="$(getent group video | cut -d: -f3)"
 set +a
 
 [ -f "$RADIANCE_MODELS/$RADIANCE_MODEL" ] || { echo "rad/run.sh: no model at $RADIANCE_MODELS/$RADIANCE_MODEL" >&2; exit 1; }
-# The engine does not create the disk tier's directory; without it the tier is off.
-mkdir -p "$RADIANCE_STATE/kvcache/$RADIANCE_PROFILE"
+
 
 # A user unit cannot order itself after the system docker.service; wait for it.
 for _ in $(seq 60); do docker info >/dev/null 2>&1 && break; sleep 2; done

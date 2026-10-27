@@ -140,9 +140,12 @@ A profile in `rad/profiles/` describes each model. `RADIANCE_PROFILE` in
 
 A switch restarts the whole stack, Open WebUI included, and the new model loads
 in a few minutes. Flash-Next is larger than the page cache can keep, so
-switching back to it reads the whole file from disk again. Each profile keeps
-its own prefix-cache directory (`rad/state/kvcache/<profile>/`, up to 128 GiB
-each).
+switching back to it reads the whole file from disk again. Prefix caching uses
+VRAM and an 8192 MiB host-RAM tier, with a 3600-second idle TTL. The host tier is
+allocated as pinned RAM at startup; finished conversations are copied there
+before their VRAM is reclaimed. Radiance removed
+the SSD prefix tier in 1.5.0 because of excessive writes (upstream issue #70);
+no conversation cache is written to disk, and a restart loses the cache.
 
 Both profiles are served as `qwen-local` (`SERVED_MODEL_NAME` in
 `rad/config.env`), so clients need no change. The id therefore does not tell
@@ -161,7 +164,7 @@ update `RADIANCE_MODEL_REVISION` and delete the file.
 
 | File | Holds |
 |---|---|
-| `rad/config.env` | Image tag, active profile, served model id, model and state directories, host/port |
+| `rad/config.env` | Image tag, active profile, served model id, model directory, host/port |
 | `rad/profiles/<name>.env` | Model file, its Hugging Face repo and pinned revision, the model's own engine flags (`RADIANCE_ARGS`; Flash-Next's expert host pool) |
 | `rad/compose.yaml` | Engine flags every profile shares: TP, sequences, context, KV dtype, prefix-cache tiers. The parser takes `--flag value`, not `--flag=value` |
 | `rad/cicero-rad.service` | The user unit; `rad/install-service.sh` installs it (paths are rewritten to the repo's location) |
@@ -170,7 +173,9 @@ update `RADIANCE_MODEL_REVISION` and delete the file.
 `HOST_POOL_MIB` (Flash-Next) trades RAM for VRAM: experts the pool cannot hold take card
 memory away from the KV cache.
 
-`rad/state/kvcache/` holds conversation KV on disk, unencrypted.
+The image is pinned to 1.10.0. The quick Flash-Next uncensored benchmark gave
+139/327 aggregate tok/s at 1/4 streams, 4.4K tok/s prefill, and 15/15 tool calls.
+These are not a controlled comparison with the original-profile 1.4.0 baseline.
 
 ## Booting into TTY
 
@@ -219,7 +224,7 @@ rad/
   cicero-rad.service        #   the systemd user unit
   install-service.sh        #   install/enable the unit; retire legacy units
   bench-openai.py           #   decode / prefill / mixed / tool-call benchmark
-  state/                    #   prefix-cache disk tier (gitignored)
+  state/                    #   local benchmark results (gitignored)
 gpu-power/                  # boot-time GPU power cap (system unit, root)
 models/rad/                 # the .rad model containers (gitignored)
 hindsight/                  # Hindsight memory server: docs, updater, UI unit, benchmark, history
