@@ -40,26 +40,30 @@ and with the same flags:
   pinned host-RAM tier, so a returning conversation skips its prefill. Nothing
   is written to disk; a restart loses the cache.
 
-Full run on 1.13.0 with `rad/bench-openai.py` (2026-10-27, `flashnext-uncensored`,
-driver 31.60), against the full run on 1.2.3 (2026-10-07, `flashnext`, driver 31.50):
+Full run on 1.15.0 with `rad/bench-openai.py` (2026-10-31, `flashnext-uncensored`,
+driver 31.60), against 1.13.0 (2026-10-27, same profile) and the full run on
+1.2.3 (2026-10-07, `flashnext`, driver 31.50):
 
 | | 1 stream | 2 | 4 | 8 |
 |---|---:|---:|---:|---:|
+| decode, aggregate tok/s, 1.15.0 | 131 | 219 | 310 | 476 |
+| decode, per request tok/s, 1.15.0 | 134 | 113 | 95 | 71 |
 | decode, aggregate tok/s, 1.13.0 | 122 | 215 | 310 | 474 |
-| decode, per request tok/s, 1.13.0 | 125 | 128 | 88 | 69 |
 | decode, aggregate tok/s, 1.2.3 | 117 | 212 | 316 | 448 |
 
-Prefill runs at 4.1–4.6K tok/s (4K–53K-token prompts; 1.2.3: 3.6–4.2K). A 25K
-prefill fired during a decode stream finishes in 6.6 s while that stream keeps
-62 tok/s. 15 of 15 tool-call probes returned well-formed calls. Decode is
-sampled at temperature 1.0, so MTP acceptance and per-prompt speed vary from run
-to run; the full run's three repetitions skip the fast `reason` prompt, so its
-single-stream median reads lower than the quick run's.
+Prefill runs at 4.6–4.7K tok/s on 4K–53K-token prompts (1.13.0: 4.1–4.6K;
+1.2.3: 3.6–4.2K). A 25K prefill fired during a decode stream finishes in 6.5 s
+while that stream keeps 65 tok/s. 15 of 15 tool-call probes returned
+well-formed calls. Decode is sampled at temperature 1.0, so MTP acceptance and
+per-prompt speed vary from run to run; the full run's three repetitions skip
+the fast `reason` prompt, so its single-stream median reads lower than the
+quick run's.
 
 The quick run (`--conc 1,4 --reps 4 --prefill 16384`) on the uncensored profile
-gave 155/324 aggregate tok/s at 1/4 streams and 4.66K tok/s prefill on 1.13.0,
-against 139/327 and 4.42K on 1.10.0 (2026-10-21) and 143/308 and 4.58K on
-1.4.0 (`flashnext`).
+gave 143/304 aggregate tok/s at 1/4 streams and 4.77K tok/s prefill on 1.17.0
+(2026-11-11, mixed 6.4 s / 67 tok/s, 15/15 tool calls), 150/335 and 4.72K on 1.15.0,
+against 155/324 and 4.66K on 1.13.0, 139/327 and 4.42K on 1.10.0 (2026-10-21)
+and 143/308 and 4.58K on 1.4.0 (`flashnext`).
 
 ## Using the API
 
@@ -75,7 +79,8 @@ Point any OpenAI-compatible client at `http://cicero.local:8080/v1`. No API key.
   name, but `GET /v1/models/<id>` returns 404 for anything other than
   `qwen-local`, so a client that checks the model first needs that id. Both
   profiles use this id; `GET /v1/models` shows which is loaded in `root` (the
-  `.rad` file) along with `max_model_len`.
+  `.rad` file) along with `max_model_len`. Since 1.15.1 `root` is shown only to
+  callers on this machine; LAN clients see `max_model_len` alone.
 - **Unknown parameters are ignored silently** (since 1.4.0; earlier releases
   refused them with HTTP 400), so a misspelled field has no effect and no
   error. An OpenAI `reasoning` object is accepted. `reasoning_effort` takes
@@ -118,7 +123,8 @@ Hindsight is installed separately; see [`hindsight/README.md`](hindsight/README.
 tail -f logs/rad.log          # engine + Open WebUI log
 systemctl --user status cicero-rad.service
 curl -fsS http://127.0.0.1:8080/v1/models
-./rad/bench-openai.py --label flashnext-rad-1.13.0   # benchmark; results append to bench-results.jsonl
+curl -fsS http://127.0.0.1:8080/health   # 503 "stuck" when the GPU stopped making progress
+./rad/bench-openai.py --label flashnext-rad-1.17.0   # benchmark; results append to bench-results.jsonl
 ```
 
 Startup takes a few minutes: the engine loads the model and copies the n-gram
@@ -187,6 +193,10 @@ Engine flags this setup leaves off: `--control-vector off|on` loads upstream's
 refusal-direction vector for Flash-Next (per request: `"control_vector": true`),
 redundant on the uncensored profile; `--attn-prefill-fp8` speeds up very long
 27B prompts (+20% at 221K tokens, lossy) and does not start on Flash-Next.
+The expert-residency options of 1.14.0 (`--expert-profile`, `--expert-pin-top`,
+`--draft-expert-placement host`) were measured on 1.15.0 and gave nothing over
+the default heat engine, which already moves decode-hot experts into VRAM;
+moving the MTP head's experts to RAM cost 22% of 4-stream decode.
 
 ## Booting into TTY
 
