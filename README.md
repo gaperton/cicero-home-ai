@@ -61,7 +61,9 @@ quick run's.
 
 The quick run (`--conc 1,4 --reps 4 --prefill 16384`) on the uncensored profile
 gave 143/304 aggregate tok/s at 1/4 streams and 4.77K tok/s prefill on 1.17.0
-(2026-11-11, mixed 6.4 s / 67 tok/s, 15/15 tool calls), 150/335 and 4.72K on 1.15.0,
+(2026-11-11, mixed 6.4 s / 67 tok/s, 15/15 tool calls). The same day 1.15.0 gave
+145/321 and 4.72K, so 1.17.0 decodes ~4% slower at 4 streams and is level
+elsewhere. 1.15.0 on 2026-10-31: 150/335 and 4.72K,
 against 155/324 and 4.66K on 1.13.0, 139/327 and 4.42K on 1.10.0 (2026-10-21)
 and 143/308 and 4.58K on 1.4.0 (`flashnext`).
 
