@@ -4,6 +4,8 @@
 memory:
   # VRAM left unclaimed per card; the engine asks >= 226.
   gpu-headroom-mib: 256
+  # Pinned host RAM the server may hold (default 75% of RAM, ~91 GiB, which the cache tiers below exceed).
+  host-mib: 108544
 scheduler:
   # A request that arrives while the model loads waits this long, then gets 503.
   load-timeout: 600s
@@ -13,6 +15,7 @@ defaults:
   max-model-len: 262144
   # 2.0 refuses fp8 for Qwen models.
   kv-cache-dtype: i8
-  # Prefix cache in VRAM plus this much pinned host RAM; unused conversations expire after 3600 s.
-  prefix-cache-mib: 8192
+  # Prefix cache in VRAM plus this much pinned host RAM (~1.14M tokens on Flash-Next); unused
+  # conversations expire after 3600 s.
+  prefix-cache-mib: 16384
   prefix-cache-ttl: 3600

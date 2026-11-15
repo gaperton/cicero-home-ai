@@ -7,6 +7,8 @@ placement: expert_tiered
 # Pinned host tier for experts, for both cards together (2.0): 12 GiB per card.
 host-pool-mib: 24576
 num-speculative-tokens: 3
+# Linear-state snapshots (112.73 MiB each, pinned RAM) shared by all stored conversations; auto gave 80.
+checkpoint-slots: 120
 max-num-batched-tokens: 2048
 # Upstream's bundled refusal-direction vector, loaded but off; a request turns it on with
 # "control_vector": true (Open WebUI's qwen-local-uncensored model sends it).

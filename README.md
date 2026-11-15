@@ -29,7 +29,8 @@ vision tower) tensor-parallel across both cards:
   next to it.
 - **Host RAM** — experts that do not fit VRAM stream from a pinned 12 GiB pool
   per card; the 47.7 GiB n-gram table and the token embedding sit in pinned RAM.
-  Expect ~100 GB of RAM in use while serving.
+  With the prefix cache's host tier and snapshot store below, ~102 GiB is
+  pinned and ~112 GB of RAM is in use while serving, leaving ~8 GB.
 - **Context and concurrency** — 262,144 tokens per request, 8 sequences at once,
   int8 KV cache. The pool holds ~4.4 full-length sessions; beyond that the
   scheduler preempts.
@@ -39,8 +40,12 @@ vision tower) tensor-parallel across both cards:
   `"control_vector": true` gets refusals projected out. Open WebUI shows that as
   a second model, `qwen-local-uncensored`. It replaces the abliterated
   `flashnext-uncensored` container, which has no build radiance 2.0 can load.
-- **Prefix cache** — finished conversations' KV moves from VRAM to an 8 GiB
-  pinned host-RAM tier, so a returning conversation skips its prefill. Nothing
+- **Prefix cache** — finished conversations' KV moves from VRAM to a 16 GiB
+  pinned host-RAM tier (~1.14M tokens), so a returning conversation skips its
+  prefill. Flash-Next's linear layers also need a saved state snapshot to
+  resume from; 120 snapshot slots (13.2 GiB of pinned RAM) are shared by all
+  stored conversations. The 8 GiB / 80-slot defaults ran full under an agent
+  with many subtask sessions. Nothing
   is written to disk; a restart loses the cache.
 
 Full runs with `rad/bench-openai.py`, driver 31.60. 2.0.0 serves the IQR-V4
@@ -159,7 +164,7 @@ radiance 2.0 refuses FP8 containers, so the 1.x files left in `models/rad/`
 A switch restarts the whole stack, Open WebUI included, and the new model loads
 in a few minutes. Flash-Next is larger than the page cache can keep, so
 switching back to it reads the whole file from disk again. Prefix caching uses
-VRAM and an 8192 MiB host-RAM tier, with a 3600-second idle TTL. The host tier is
+VRAM and a 16384 MiB host-RAM tier, with a 3600-second idle TTL. The host tier is
 allocated as pinned RAM at startup; finished conversations are copied there
 before their VRAM is reclaimed. Radiance removed
 the SSD prefix tier in 1.5.0 because of excessive writes (upstream issue #70);
