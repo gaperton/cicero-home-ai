@@ -1,0 +1,34 @@
+# rad/compose.yaml — the active model profile on both R9700s via the radiance engine
+# (codeberg.org/StillDeadcode/radiance). The server takes only a YAML file: run.sh writes
+# rad/state/radiance.yaml from config.env, rad/radiance.yaml and the profile, mounted below.
+# Started in the foreground by run.sh under cicero-rad.service; variables come from
+# config.env and rad/profiles/<profile>.env (exported by run.sh). No restart policy: systemd
+# supervises. No API key.
+
+name: cicero-rad
+
+services:
+  radiance:
+    image: ${RADIANCE_IMAGE}
+    container_name: cicero-rad
+    init: true
+    network_mode: host
+    # IDs come from run.sh: the host's own user and its render/video groups.
+    user: "${RAD_UID}:${RAD_GID}"
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - "${RENDER_GID}"
+      - "${VIDEO_GID}"
+    # io_uring (n-gram table reads) and ROCm's NUMA calls are refused by the default profile.
+    security_opt:
+      - seccomp=unconfined
+    ulimits:
+      memlock: -1
+    volumes:
+      - ${RADIANCE_MODELS}:/models:ro
+      - ${RADIANCE_CONFIG}:/etc/radiance/radiance.yaml:ro
+
+    stop_grace_period: 60s
+    command: --config /etc/radiance/radiance.yaml

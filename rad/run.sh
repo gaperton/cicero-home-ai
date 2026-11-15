@@ -70,7 +70,8 @@ export ENABLE_OLLAMA_API=false
 export OPENAI_API_KEYS="none"
 export OPENAI_API_BASE_URLS="http://127.0.0.1:$PORT/v1"
 
-open-webui serve --port 3000 &
+# uvicorn binds "::" IPv6-only; an empty host gives separate 0.0.0.0 and :: sockets.
+open-webui serve --host "" --port 3000 &
 PIDS+=("$!")
 
 echo "$(date -Is) rad: $RADIANCE_IMAGE, profile $RADIANCE_PROFILE: $RADIANCE_MODEL as $SERVED_MODEL_NAME on $HOST:$PORT, config rad/state/radiance.yaml"

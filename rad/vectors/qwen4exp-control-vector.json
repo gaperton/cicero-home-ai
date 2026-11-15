@@ -1,0 +1,15 @@
+{
+ "mode": "project",
+ "dir": "per-layer",
+ "scale": 1.0,
+ "layer_range": [
+  4,
+  44
+ ],
+ "vector_file": "Huihui-Qwen3.8-Flash-Next-refusal-direction-r.gguf",
+ "source_repo": "orz99/Qwen3.8-Flash-Next-abliterated-GSQ-RCO-Strata-GGUF",
+ "direction_source": "rank-one component of huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated weight difference (W - r r^T W), unit direction r, tensors direction.1..47",
+ "author_measured": "0/10 refusals (thinking off and on) vs 1/10 for the bundled activation-contrast projection; KL vs stock on the same quant 0.005-0.023 vs 0.018-0.045; Strata engine, IQ3_S/IQ2_XS, English, n=10",
+ "note": "installed for a local A/B against the bundled Cudecnik projection; original kept in rad/vectors-backup/. layer_range mirrors the value radiance reported for the bundled file.",
+ "installed_by": "Hermes A/B test 2026-11-15"
+}

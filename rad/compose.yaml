@@ -29,6 +29,8 @@ services:
     volumes:
       - ${RADIANCE_MODELS}:/models:ro
       - ${RADIANCE_CONFIG}:/etc/radiance/radiance.yaml:ro
+      # Overrides the image portfolio with host files so a vector can be swapped without rebuilding (Hermes A/B, 2026-11-15).
+      - /mnt/data/cicero-home-ai/rad/vectors:/opt/radiance/share/radiance/vectors:ro
 
     stop_grace_period: 60s
     command: --config /etc/radiance/radiance.yaml
