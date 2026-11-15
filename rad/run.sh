@@ -2,7 +2,7 @@
 # rad/run.sh — Open WebUI and the radiance server. Run by cicero-rad.service in
 # the foreground; exits when either child dies.
 #
-# radiance: :$PORT, the model of rad/profiles/$RADIANCE_PROFILE.env. Open WebUI: :3000, pointed at it.
+# radiance: :$PORT, the model of rad/profiles/$RADIANCE_PROFILE.{env,yaml}. Open WebUI: :3000, pointed at it.
 set -euo pipefail
 
 RAD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,6 +32,19 @@ VIDEO_GID="$(getent group video | cut -d: -f3)"
 set +a
 
 [ -f "$RADIANCE_MODELS/$RADIANCE_MODEL" ] || { echo "rad/run.sh: no model at $RADIANCE_MODELS/$RADIANCE_MODEL" >&2; exit 1; }
+PROFILE_YAML="$RAD_DIR/profiles/$RADIANCE_PROFILE.yaml"
+[ -f "$PROFILE_YAML" ] || { echo "rad/run.sh: no engine keys at $PROFILE_YAML" >&2; exit 1; }
+
+# radiance 2.0 reads only a YAML file: server from config.env, shared keys, the profile's entry.
+export RADIANCE_CONFIG="$RAD_DIR/state/radiance.yaml"
+mkdir -p "$RAD_DIR/state"
+{
+    echo "# Written by rad/run.sh from rad/config.env, rad/radiance.yaml and $PROFILE_YAML; do not edit."
+    printf 'server:\n  host: "%s"\n  port: %s\n' "$HOST" "$PORT"
+    grep -v '^#' "$RAD_DIR/radiance.yaml"
+    printf 'models:\n  %s:\n    model: /models/%s\n' "$SERVED_MODEL_NAME" "$RADIANCE_MODEL"
+    grep -v '^#' "$PROFILE_YAML" | sed 's/^/    /'
+} > "$RADIANCE_CONFIG"
 
 
 # A user unit cannot order itself after the system docker.service; wait for it.
@@ -60,7 +73,7 @@ export OPENAI_API_BASE_URLS="http://127.0.0.1:$PORT/v1"
 open-webui serve --port 3000 &
 PIDS+=("$!")
 
-echo "$(date -Is) rad: $RADIANCE_IMAGE, profile $RADIANCE_PROFILE: $RADIANCE_MODEL as $SERVED_MODEL_NAME on $HOST:$PORT, extra flags: ${RADIANCE_ARGS:-none}"
+echo "$(date -Is) rad: $RADIANCE_IMAGE, profile $RADIANCE_PROFILE: $RADIANCE_MODEL as $SERVED_MODEL_NAME on $HOST:$PORT, config rad/state/radiance.yaml"
 "${COMPOSE[@]}" up --no-log-prefix &
 PIDS+=("$!")
 

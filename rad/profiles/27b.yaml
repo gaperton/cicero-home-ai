@@ -1,0 +1,5 @@
+# Keys of the 27B entry beyond rad/radiance.yaml's defaults (upstream README, 27B IQ8R row).
+# The drafter picks its own speculation depth.
+aliases: [qwen3.8-27b]
+tp: 2
+max-num-seqs: 32

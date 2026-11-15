@@ -1,0 +1,18 @@
+# rad/radiance.yaml — radiance settings shared by every profile (radiance 2.0 YAML; keys as in
+# upstream docs/GUIDE.md §4.11). run.sh prepends server: from config.env, appends the active
+# profile as the one entry under models:, and writes rad/state/radiance.yaml for compose.yaml.
+memory:
+  # VRAM left unclaimed per card; the engine asks >= 226.
+  gpu-headroom-mib: 256
+scheduler:
+  # A request that arrives while the model loads waits this long, then gets 503.
+  load-timeout: 600s
+# Merged under the model's entry; the profile's own keys win.
+defaults:
+  # The full trained context (upstream: 200000).
+  max-model-len: 262144
+  # 2.0 refuses fp8 for Qwen models.
+  kv-cache-dtype: i8
+  # Prefix cache in VRAM plus this much pinned host RAM; unused conversations expire after 3600 s.
+  prefix-cache-mib: 8192
+  prefix-cache-ttl: 3600

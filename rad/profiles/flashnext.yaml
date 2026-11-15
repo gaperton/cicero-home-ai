@@ -1,0 +1,13 @@
+# Keys of the Flash-Next entry beyond rad/radiance.yaml's defaults (upstream README, Flash-Next row).
+aliases: [qwen3.8-flash-next]
+tp: 2
+tp-wire: wht6
+max-num-seqs: 8
+placement: expert_tiered
+# Pinned host tier for experts, for both cards together (2.0): 12 GiB per card.
+host-pool-mib: 24576
+num-speculative-tokens: 3
+max-num-batched-tokens: 2048
+# Upstream's bundled refusal-direction vector, loaded but off; a request turns it on with
+# "control_vector": true (Open WebUI's qwen-local-uncensored model sends it).
+control-vector: off

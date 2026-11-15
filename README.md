@@ -20,52 +20,51 @@ Open WebUI and the radiance container (`docker compose`, `rad/compose.yaml`) in
 the foreground and exits as soon as either dies, so systemd restarts the
 whole stack. Both write to `logs/rad.log`.
 
-With the `flashnext` profile, radiance serves the 114 GiB model container
-`qwen3.8-next-flash-fp8-iq4r-moe.rad` (4-bit experts, int8 trunk, MTP head,
-vision tower) tensor-parallel across both cards. `flashnext-uncensored` (the
-active profile) is the same model with refusals abliterated, at the same size
-and with the same flags:
+With the `flashnext` profile, radiance serves the 113.3 GiB model container
+`qwen3.8-next-flash-iqr-v4.rad` (IQR-V4 4-bit experts, int8 trunk, MTP head,
+vision tower) tensor-parallel across both cards:
 
-- **VRAM** — both cards are filled to ~99%: ~3.6 GiB of fixed weights, ~18 GiB
-  of experts and ~8.2 GiB of KV cache per card. Nothing else GPU-bound can run
+- **VRAM** — both cards are filled to ~99%: ~3.2 GiB of fixed weights, ~17.3 GiB
+  of experts and ~9.0 GiB of KV cache per card. Nothing else GPU-bound can run
   next to it.
 - **Host RAM** — experts that do not fit VRAM stream from a pinned 12 GiB pool
   per card; the 47.7 GiB n-gram table and the token embedding sit in pinned RAM.
-  Expect ~85 GB of RAM in use while serving.
+  Expect ~100 GB of RAM in use while serving.
 - **Context and concurrency** — 262,144 tokens per request, 8 sequences at once,
-  FP8 KV cache. The pool holds ~4.0 full-length sessions; beyond that the
+  int8 KV cache. The pool holds ~4.4 full-length sessions; beyond that the
   scheduler preempts.
 - **Speculative decoding** — the model's MTP head drafts 3 tokens per step.
+- **Refusals** — upstream's bundled refusal-projection control vector is loaded
+  but off: `qwen-local` is the stock model, and a request that sends
+  `"control_vector": true` gets refusals projected out. Open WebUI shows that as
+  a second model, `qwen-local-uncensored`. It replaces the abliterated
+  `flashnext-uncensored` container, which has no build radiance 2.0 can load.
 - **Prefix cache** — finished conversations' KV moves from VRAM to an 8 GiB
   pinned host-RAM tier, so a returning conversation skips its prefill. Nothing
   is written to disk; a restart loses the cache.
 
-Full run on 1.15.0 with `rad/bench-openai.py` (2026-10-31, `flashnext-uncensored`,
-driver 31.60), against 1.13.0 (2026-10-27, same profile) and the full run on
-1.2.3 (2026-10-07, `flashnext`, driver 31.50):
+Full runs with `rad/bench-openai.py`, driver 31.60. 2.0.0 serves the IQR-V4
+container (2026-11-15, right after the switch); 1.17.0 and 1.15.0 served the
+FP8 `flashnext-uncensored` container (1.17.0 on 2026-11-15 after three days'
+uptime, 1.15.0 on 2026-10-31):
 
 | | 1 stream | 2 | 4 | 8 |
 |---|---:|---:|---:|---:|
+| decode, aggregate tok/s, 2.0.0 | 165 | 254 | 327 | 483 |
+| decode, per request tok/s, 2.0.0 | 168 | 132 | 99 | 71 |
+| decode, aggregate tok/s, 1.17.0 | 132 | 201 | 296 | 458 |
 | decode, aggregate tok/s, 1.15.0 | 131 | 219 | 310 | 476 |
-| decode, per request tok/s, 1.15.0 | 134 | 113 | 95 | 71 |
-| decode, aggregate tok/s, 1.13.0 | 122 | 215 | 310 | 474 |
-| decode, aggregate tok/s, 1.2.3 | 117 | 212 | 316 | 448 |
 
-Prefill runs at 4.6–4.7K tok/s on 4K–53K-token prompts (1.13.0: 4.1–4.6K;
-1.2.3: 3.6–4.2K). A 25K prefill fired during a decode stream finishes in 6.5 s
-while that stream keeps 65 tok/s. 15 of 15 tool-call probes returned
-well-formed calls. Decode is sampled at temperature 1.0, so MTP acceptance and
-per-prompt speed vary from run to run; the full run's three repetitions skip
-the fast `reason` prompt, so its single-stream median reads lower than the
-quick run's.
-
-The quick run (`--conc 1,4 --reps 4 --prefill 16384`) on the uncensored profile
-gave 143/304 aggregate tok/s at 1/4 streams and 4.77K tok/s prefill on 1.17.0
-(2026-11-11, mixed 6.4 s / 67 tok/s, 15/15 tool calls). The same day 1.15.0 gave
-145/321 and 4.72K, so 1.17.0 decodes ~4% slower at 4 streams and is level
-elsewhere. 1.15.0 on 2026-10-31: 150/335 and 4.72K,
-against 155/324 and 4.66K on 1.13.0, 139/327 and 4.42K on 1.10.0 (2026-10-21)
-and 143/308 and 4.58K on 1.4.0 (`flashnext`).
+On 2.0.0 prefill runs at 5.1–5.3K tok/s on 4K–53K-token prompts (1.17.0:
+4.72–4.77K). A 25K prefill fired during a decode stream finishes in 6.5–6.8 s
+while that stream keeps 116–139 tok/s (1.17.0: 6.6 s at 63 tok/s). 15 of 15
+tool-call probes returned well-formed calls. The quick run (`--conc 1,4 --reps 4
+--prefill 16384`) gave 161/340 aggregate tok/s at 1/4 streams and 5.25K tok/s
+prefill, against 148/301 and 4.85K on 1.17.0. Decode is sampled at temperature
+1.0, so MTP acceptance and per-prompt speed vary from run to run; the full run's
+three repetitions skip the fast `reason` prompt, so its single-stream median
+reads lower than the quick run's. Earlier quick runs: 1.15.0 150/335 and 4.72K,
+1.13.0 155/324 and 4.66K, 1.10.0 139/327 and 4.42K, 1.4.0 143/308 and 4.58K.
 
 ## Using the API
 
@@ -77,12 +76,12 @@ Point any OpenAI-compatible client at `http://cicero.local:8080/v1`. No API key.
   Anthropic's `/v1/messages` and llama-server's `/completion`, `/infill` and
   `/props`, with logprobs. `/v1/embeddings` is for embedding models only, so it
   is not available here.
-- **Model id:** chat and completion requests are served whatever `model` they
-  name, but `GET /v1/models/<id>` returns 404 for anything other than
-  `qwen-local`, so a client that checks the model first needs that id. Both
-  profiles use this id; `GET /v1/models` shows which is loaded in `root` (the
-  `.rad` file) along with `max_model_len`. Since 1.15.1 `root` is shown only to
-  callers on this machine; LAN clients see `max_model_len` alone.
+- **Model id:** a request must name `qwen-local` or the profile's alias
+  (`qwen3.8-flash-next` or `qwen3.8-27b`); any other name gets 404 (radiance 1.x
+  served any name). A request without `model` goes to the loaded model. Every
+  profile uses this id; `GET /v1/models` shows which is loaded in `root` (the
+  `.rad` file) along with `max_model_len` and `state`. `root` is shown only to
+  callers on this machine.
 - **Unknown parameters are ignored silently** (since 1.4.0; earlier releases
   refused them with HTTP 400), so a misspelled field has no effect and no
   error. An OpenAI `reasoning` object is accepted. `reasoning_effort` takes
@@ -105,8 +104,8 @@ Point any OpenAI-compatible client at `http://cicero.local:8080/v1`. No API key.
    ```bash
    sudo ./install.sh
    ```
-4. Reload your shell, then pull the image, download the model (~114 GiB into
-   `models/rad/`) and start the stack:
+4. Reload your shell, then pull the image, download the model (~113 GiB into
+   `models/radiance_v2/`) and start the stack:
    ```bash
    source ~/.bashrc
    ./update.sh
@@ -125,14 +124,14 @@ Hindsight is installed separately; see [`hindsight/README.md`](hindsight/README.
 tail -f logs/rad.log          # engine + Open WebUI log
 systemctl --user status cicero-rad.service
 curl -fsS http://127.0.0.1:8080/v1/models
-curl -fsS http://127.0.0.1:8080/health   # 503 "stuck" when the GPU stopped making progress
-./rad/bench-openai.py --label flashnext-rad-1.17.0   # benchmark; results append to bench-results.jsonl
+curl -fsS http://127.0.0.1:8080/health   # the process and each model's state
+./rad/bench-openai.py --label flashnext-rad-2.0.0   # benchmark; results append to bench-results.jsonl
 ```
 
-Startup takes a few minutes: the engine loads the model and copies the n-gram
-table into pinned RAM before `server: listening` appears in the log. Read the
-`placement:` and `VRAM budget` lines there to see where each part of the model
-landed.
+Flash-Next was ready 30 s after a restart with the file in the page cache: the
+engine loads the model and copies the n-gram table into pinned RAM before
+`model qwen-local: ready` appears in the log. Read the `placement:` and `VRAM
+budget` lines there to see where each part of the model landed.
 
 radiance releases land several times a day, so the image tag is pinned in
 `rad/config.env` and changes only through `./update.sh <tag>`. Re-run
@@ -147,9 +146,11 @@ A profile in `rad/profiles/` describes each model. `RADIANCE_PROFILE` in
 
 | Profile | Model | File |
 |---|---|---|
-| `flashnext` | Qwen3.8-Flash-Next, MoE; experts partly in pinned RAM | `qwen3.8-next-flash-fp8-iq4r-moe.rad`, 114 GiB |
-| `flashnext-uncensored` | The same, refusals abliterated | `qwen3.8-next-flash-uncensored-fp8-iq4r-moe.rad`, 114 GiB |
-| `27b` | Qwen3.8-27B FP8, dense, DFlash2 drafter, vision; fits VRAM | `qwen3.8-27b-fp8.rad`, 28.67 GiB |
+| `flashnext` | Qwen3.8-Flash-Next IQR-V4, MoE; experts partly in pinned RAM; refusal control vector per request | `qwen3.8-next-flash-iqr-v4.rad`, 113.3 GiB |
+| `27b` | Qwen3.8-27B IQ8R, dense, DFlash2 drafter, vision; fits VRAM (not yet started on 2.0) | `qwen3.8-27b-iq8r-dflash.rad`, 28.76 GiB |
+
+radiance 2.0 refuses FP8 containers, so the 1.x files left in `models/rad/`
+(`flashnext`, `flashnext-uncensored`, `27b` FP8) no longer load.
 
 ```bash
 ./switch.sh 27b               # download if missing, set RADIANCE_PROFILE, restart the stack
@@ -183,22 +184,30 @@ update `RADIANCE_MODEL_REVISION` and delete the file.
 | File | Holds |
 |---|---|
 | `rad/config.env` | Image tag, active profile, served model id, model directory, host/port |
-| `rad/profiles/<name>.env` | Model file, its Hugging Face repo and pinned revision, the model's own engine flags (`RADIANCE_ARGS`; Flash-Next's expert host pool) |
-| `rad/compose.yaml` | Engine flags every profile shares: TP, sequences, context, KV dtype, prefix-cache tiers. The parser takes `--flag value`, not `--flag=value` |
+| `rad/profiles/<name>.env` | Model file, its Hugging Face repo and pinned revision |
+| `rad/profiles/<name>.yaml` | The model's own engine keys: aliases, TP, sequences, Flash-Next's expert placement and host pool, the control vector |
+| `rad/radiance.yaml` | Engine keys every profile shares: VRAM headroom, load timeout, and under `defaults:` context, KV dtype and the prefix cache |
+| `rad/compose.yaml` | The container: devices, groups, mounts. radiance 2.0 takes only `--config FILE`; `run.sh` writes `rad/state/radiance.yaml` from the three files above and compose mounts it |
 | `rad/cicero-rad.service` | The user unit; `rad/install-service.sh` installs it (paths are rewritten to the repo's location) |
 | `gpu-power/cicero-gpu-power.service` | `GPU_POWER_CAP_W` (210–300). Re-run `sudo gpu-power/install.sh` after editing |
 
-`HOST_POOL_MIB` (Flash-Next) trades RAM for VRAM: experts the pool cannot hold take card
-memory away from the KV cache.
+`host-pool-mib` (Flash-Next) trades RAM for VRAM: experts the pool cannot hold
+take card memory away from the KV cache. Since 2.0 it is the pool for both cards
+together, so 24576 is 12 GiB per card (1.x read 12288 as per card). To validate
+a config without restarting, run the image with the two mounts and `--config
+/etc/radiance/radiance.yaml --check`.
 
-Engine flags this setup leaves off: `--control-vector off|on` loads upstream's
-refusal-direction vector for Flash-Next (per request: `"control_vector": true`),
-redundant on the uncensored profile; `--attn-prefill-fp8` speeds up very long
-27B prompts (+20% at 221K tokens, lossy) and does not start on Flash-Next.
-The expert-residency options of 1.14.0 (`--expert-profile`, `--expert-pin-top`,
-`--draft-expert-placement host`) were measured on 1.15.0 and gave nothing over
-the default heat engine, which already moves decode-hot experts into VRAM;
-moving the MTP head's experts to RAM cost 22% of 4-stream decode.
+`control-vector: off` loads Cudecnik's refusal projection (bundled with the
+image, layers 4..44) and leaves requests off; a request opts in with
+`"control_vector": true`. `POST /admin/control-vector {"enabled": true|false}`
+from this machine changes the default until the next restart. Open WebUI's
+`qwen-local-uncensored` is a workspace model on top of `qwen-local` whose
+Advanced Params carry the custom parameter `control_vector` = `true`; Open
+WebUI parses the value as JSON, so it arrives as a boolean. The expert-residency options of 1.14.0 (`expert-profile`,
+`expert-pin-top`, `draft-expert-placement: host`) were measured on 1.15.0 and
+gave nothing over the default heat engine, which already moves decode-hot
+experts into VRAM; moving the MTP head's experts to RAM cost 22% of 4-stream
+decode.
 
 ## Booting into TTY
 
@@ -240,8 +249,9 @@ switch.sh                   # change the served model profile, restart
 start.sh / stop.sh          # systemd service control
 rad/
   config.env                #   shared settings: image pin, active profile, served id, port
-  profiles/                 #   one .env per model: file, repo + revision, model flags
-  compose.yaml              #   radiance engine flags common to all profiles
+  profiles/                 #   per model: .env (file, repo + revision), .yaml (engine keys)
+  radiance.yaml             #   radiance engine keys common to all profiles
+  compose.yaml              #   the radiance container; mounts the config run.sh writes
   fetch-model.sh            #   download a profile's model if missing
   run.sh                    #   Open WebUI :3000 + radiance :8080, foreground
   cicero-rad.service        #   the systemd user unit
@@ -249,7 +259,8 @@ rad/
   bench-openai.py           #   decode / prefill / mixed / tool-call benchmark
   state/                    #   local benchmark results (gitignored)
 gpu-power/                  # boot-time GPU power cap (system unit, root)
-models/rad/                 # the .rad model containers (gitignored)
+models/radiance_v2/         # the .rad containers radiance 2.0 serves (gitignored)
+models/rad/                 # the 1.x FP8 containers 2.0 refuses (gitignored)
 hindsight/                  # Hindsight memory server: docs, updater, UI unit, benchmark, history
 logs/                       # rad.log (gitignored)
 ```
