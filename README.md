@@ -48,24 +48,25 @@ vision tower) tensor-parallel across both cards:
   with many subtask sessions. Nothing
   is written to disk; a restart loses the cache.
 
-Full runs with `rad/bench-openai.py`, driver 31.60. 2.0.0 serves the IQR-V4
-container (2026-11-15, right after the switch); 1.17.0 and 1.15.0 served the
-FP8 `flashnext-uncensored` container (1.17.0 on 2026-11-15 after three days'
-uptime, 1.15.0 on 2026-10-31):
+Full runs with `rad/bench-openai.py`, driver 31.60. 2.1.0 (2026-11-17) and
+2.0.0 (2026-11-15) serve the IQR-V4 container, each run right after a restart;
+1.17.0 served the FP8 `flashnext-uncensored` container (2026-11-15, after three
+days' uptime):
 
 | | 1 stream | 2 | 4 | 8 |
 |---|---:|---:|---:|---:|
+| decode, aggregate tok/s, 2.1.0 | 175 | 251 | 345 | 488 |
+| decode, per request tok/s, 2.1.0 | 179 | 138 | 95 | 72 |
 | decode, aggregate tok/s, 2.0.0 | 165 | 254 | 327 | 483 |
-| decode, per request tok/s, 2.0.0 | 168 | 132 | 99 | 71 |
 | decode, aggregate tok/s, 1.17.0 | 132 | 201 | 296 | 458 |
-| decode, aggregate tok/s, 1.15.0 | 131 | 219 | 310 | 476 |
 
-On 2.0.0 prefill runs at 5.1–5.3K tok/s on 4K–53K-token prompts (1.17.0:
-4.72–4.77K). A 25K prefill fired during a decode stream finishes in 6.5–6.8 s
-while that stream keeps 116–139 tok/s (1.17.0: 6.6 s at 63 tok/s). 15 of 15
-tool-call probes returned well-formed calls. The quick run (`--conc 1,4 --reps 4
---prefill 16384`) gave 161/340 aggregate tok/s at 1/4 streams and 5.25K tok/s
-prefill, against 148/301 and 4.85K on 1.17.0. Decode is sampled at temperature
+On 2.1.0 prefill runs at 5.2–5.3K tok/s on 4K–53K-token prompts (2.0.0:
+5.1–5.3K, 1.17.0: 4.72–4.77K). A 25K prefill fired during a decode stream
+finishes in 6.3–6.8 s while that stream keeps 120–128 tok/s (2.0.0: 6.5–6.8 s
+at 116–139; 1.17.0: 6.6 s at 63 tok/s). 15 of 15 tool-call probes returned
+well-formed calls. The quick run (`--conc 1,4 --reps 4 --prefill 16384`) gave
+173/343 aggregate tok/s at 1/4 streams and 5.34K tok/s prefill, against 161/340
+and 5.25K on 2.0.0 and 148/301 and 4.85K on 1.17.0. Decode is sampled at temperature
 1.0, so MTP acceptance and per-prompt speed vary from run to run; the full run's
 three repetitions skip the fast `reason` prompt, so its single-stream median
 reads lower than the quick run's. Earlier quick runs: 1.15.0 150/335 and 4.72K,
@@ -130,7 +131,7 @@ tail -f logs/rad.log          # engine + Open WebUI log
 systemctl --user status cicero-rad.service
 curl -fsS http://127.0.0.1:8080/v1/models
 curl -fsS http://127.0.0.1:8080/health   # the process and each model's state
-./rad/bench-openai.py --label flashnext-rad-2.0.0   # benchmark; results append to bench-results.jsonl
+./rad/bench-openai.py --label flashnext-rad-2.1.0   # benchmark; results append to bench-results.jsonl
 ```
 
 Flash-Next was ready 30 s after a restart with the file in the page cache: the
